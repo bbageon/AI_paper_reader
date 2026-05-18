@@ -1,0 +1,52 @@
+services:
+  paper-tutor:
+    build: .
+    container_name: paper-tutor
+    # Keep 8181 mapped as a direct-access fallback. Normal use goes through caddy.
+    ports:
+      - "8181:8181"
+    environment:
+      # Ollama runs on the host (Mac). host.docker.internal resolves to the
+      # host loopback from inside the container on Docker Desktop for Mac/Windows.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-gemma4:e4b}
+      # Fast small models for drag-to-translate. Must be locally installed in Ollama.
+      EXPLAIN_WORD_MODEL: ${EXPLAIN_WORD_MODEL:-gemma3:4b}
+      EXPLAIN_SENTENCE_MODEL: ${EXPLAIN_SENTENCE_MODEL:-gemma3:4b}
+      # Auto-overview after upload uses this. Manual "개요 생성" button still
+      # respects the user's selected chat model.
+      OVERVIEW_MODEL: ${OVERVIEW_MODEL:-gemma4:e4b}
+      # gemma4:e4b 기준. native context는 더 크지만 32K면 일반 논문 + 누적 대화 충분.
+      NUM_CTX: ${NUM_CTX:-32768}
+      # Set to "true" / "low" / "medium" / "high" to enable qwen3/r1/gpt-oss thinking.
+      # Default off — thinking models otherwise add big latency before content tokens.
+      THINK_MODE: ${THINK_MODE:-false}
+      SECRET_KEY: ${SECRET_KEY:-paper-tutor-dev-key-change-in-prod}
+      LIBRARY_DIR: /app/data/library
+    volumes:
+      - ./data:/app/data
+      # Bind-mount templates and app.py so edits show up without rebuild.
+      # Gunicorn doesn't auto-reload, so app.py changes still need `docker compose restart paper-tutor`,
+      # but template changes (HTML/JS) take effect on browser refresh.
+      - ./templates:/app/templates:ro
+      - ./app.py:/app/app.py:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: paper-tutor-caddy
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - paper-tutor
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

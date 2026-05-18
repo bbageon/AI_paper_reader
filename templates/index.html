@@ -1,0 +1,1775 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Paper Tutor</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<style>
+  :root {
+    --bg: #0e1014;
+    --bg-2: #161922;
+    --bg-3: #1c2030;
+    --bg-4: #242938;
+    --border: #2a3041;
+    --text: #e6e8ee;
+    --text-dim: #9aa3b8;
+    --text-mute: #6a7286;
+    --accent: #5e7bff;
+    --accent-2: #8a6dff;
+    --danger: #ff5e7a;
+    --ok: #4fd1a8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  button { font: inherit; cursor: pointer; }
+  input, textarea, select { font: inherit; color: inherit; }
+  ::selection { background: rgba(94, 123, 255, 0.5); }
+
+  #app { display: grid; grid-template-rows: 44px 1fr; height: 100vh; }
+  #topbar {
+    display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    background: var(--bg-2); border-bottom: 1px solid var(--border);
+  }
+  #topbar .brand { font-weight: 600; letter-spacing: .2px; }
+  #topbar .brand .dot { color: var(--accent); }
+  #topbar .spacer { flex: 1; }
+  #topbar select, #topbar .pill {
+    background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; font-size: 12.5px;
+  }
+  #topbar .pill { font-variant-numeric: tabular-nums; color: var(--text-dim); }
+  #topbar .status-ok { color: var(--ok); }
+  #topbar .status-bad { color: var(--danger); }
+
+  #main {
+    display: grid;
+    grid-template-columns:
+      var(--left-w, 260px)
+      6px
+      minmax(280px, 1fr)
+      6px
+      var(--right-w, 380px);
+    min-height: 0;
+  }
+  .pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  .resizer {
+    cursor: col-resize;
+    background: transparent;
+    border-left: 1px solid var(--border);
+    transition: background-color .12s;
+    user-select: none;
+  }
+  .resizer:hover, .resizer.dragging {
+    background: rgba(94, 123, 255, 0.35);
+    border-left-color: var(--accent);
+  }
+  .pane-head {
+    height: 36px; padding: 0 10px; display: flex; align-items: center; gap: 6px;
+    border-bottom: 1px solid var(--border); background: var(--bg-2);
+    font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .8px;
+  }
+  .pane-head .title { flex: 1; }
+  .icon-btn {
+    background: transparent; border: 0; color: var(--text-dim);
+    height: 24px; padding: 0 6px; border-radius: 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px;
+  }
+  .icon-btn:hover { background: var(--bg-3); color: var(--text); }
+
+  /* Explorer */
+  #explorer { background: var(--bg-2); }
+  #explorer-tree { flex: 1; overflow: auto; padding: 4px 0 12px; }
+  .tree-row {
+    display: flex; align-items: center; gap: 4px; padding: 3px 8px 3px 6px;
+    cursor: pointer; user-select: none; white-space: nowrap;
+    font-size: 13px; color: var(--text);
+  }
+  .tree-row:hover { background: var(--bg-3); }
+  .tree-row.selected { background: rgba(94, 123, 255, 0.18); color: #fff; }
+  .tree-row .chev {
+    width: 14px; flex-shrink: 0; text-align: center;
+    color: var(--text-mute); font-size: 10px;
+  }
+  .tree-row .icon { width: 16px; flex-shrink: 0; opacity: .9; }
+  .tree-row .label { overflow: hidden; text-overflow: ellipsis; }
+  .tree-children { display: none; }
+  .tree-children.open { display: block; }
+  .tree-row .row-actions { margin-left: auto; display: none; gap: 2px; }
+  .tree-row:hover .row-actions { display: inline-flex; }
+  .tree-row .row-actions button {
+    width: 20px; height: 20px; background: transparent; border: 0; color: var(--text-mute);
+    border-radius: 3px;
+  }
+  .tree-row .row-actions button:hover { background: var(--bg-4); color: var(--text); }
+
+  /* PDF viewer */
+  #viewer-wrap { background: #1a1d28; flex: 1; overflow: auto; position: relative; outline: none; }
+  #viewer-wrap:focus-visible { box-shadow: inset 0 0 0 2px rgba(94, 123, 255, 0.4); }
+  #viewer-empty {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; color: var(--text-mute); gap: 8px;
+    pointer-events: none;
+  }
+  #viewer-empty .hint { font-size: 13px; }
+  #pages { padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .page-block { position: relative; box-shadow: 0 6px 18px rgba(0,0,0,.4); border-radius: 4px; overflow: hidden; }
+  .page-block canvas { display: block; background: white; }
+  .text-layer {
+    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+    overflow: hidden; opacity: 1; line-height: 1; user-select: text;
+  }
+  .text-layer > span, .text-layer > br {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+  }
+  .text-layer ::selection { background: rgba(94, 123, 255, 0.4); }
+
+  .viewer-toolbar {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-bottom: 1px solid var(--border); background: var(--bg-2); font-size: 12.5px;
+  }
+  .viewer-toolbar .title { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .viewer-toolbar .meta { color: var(--text-mute); font-size: 11.5px; }
+  .viewer-toolbar button {
+    background: var(--bg-3); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 3px 8px; font-size: 11.5px;
+  }
+  .viewer-toolbar button:hover { background: var(--bg-4); }
+
+  /* Selection popups — light glassmorphism over white PDF.
+     Shared base used by both MINI (action) and DETAIL (result) popups. */
+  #sel-popup, #sel-action-popup {
+    position: fixed; z-index: 100;
+    background: rgba(208, 215, 228, 0.62);
+    backdrop-filter: blur(26px) saturate(180%);
+    -webkit-backdrop-filter: blur(26px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    border-radius: 14px;
+    box-shadow:
+      0 14px 44px rgba(31, 38, 135, 0.25),
+      0 1px 0 rgba(255, 255, 255, 0.45) inset,
+      0 0 0 1px rgba(0, 0, 0, 0.05);
+    padding: 10px; display: none; font-size: 13px;
+    color: #1f2937;
+    opacity: 0; transform: translateY(4px) scale(0.98);
+    transition: opacity .12s ease-out, transform .12s ease-out;
+  }
+  #sel-popup.shown, #sel-action-popup.shown {
+    display: block; opacity: 1; transform: translateY(0) scale(1);
+  }
+
+  /* DETAIL popup is draggable, sized for result content */
+  #sel-popup { max-width: 460px; min-width: 260px; cursor: grab; }
+  #sel-popup.dragging {
+    transition: none !important;
+    cursor: grabbing;
+    box-shadow:
+      0 18px 50px rgba(31, 38, 135, 0.28),
+      0 1px 0 rgba(255, 255, 255, 0.55) inset;
+  }
+
+  /* MINI popup: compact, not draggable, just actions */
+  #sel-action-popup { width: 300px; padding: 8px; }
+
+  #sel-popup .actions, #sel-action-popup .actions {
+    display: flex; gap: 5px; margin-bottom: 6px;
+  }
+  #sel-popup .actions button, #sel-action-popup .actions button {
+    flex: 1; padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    color: #1f2937; border-radius: 8px; font-size: 12px; font-weight: 500;
+    cursor: pointer;
+    transition: background .12s, border-color .12s, color .12s, transform .08s;
+    backdrop-filter: blur(6px);
+  }
+  #sel-popup .actions button:hover, #sel-action-popup .actions button:hover {
+    background: var(--accent); border-color: var(--accent); color: white;
+  }
+  #sel-popup .actions button:active, #sel-action-popup .actions button:active {
+    transform: scale(0.97);
+  }
+
+  #sel-popup .selection-text, #sel-action-popup .selection-text {
+    font-size: 11.5px; color: #4b5563; padding: 6px 9px;
+    background: rgba(255, 255, 255, 0.32);
+    border-radius: 7px;
+    border-left: 2px solid var(--accent);
+    margin-bottom: 6px;
+    max-height: 60px; overflow: hidden;
+  }
+  #sel-action-popup .actions { margin-bottom: 0; }
+
+  #sel-popup .explanation {
+    padding: 8px 10px; color: #1f2937; line-height: 1.6; white-space: pre-wrap;
+    max-height: 340px; overflow: auto;
+    cursor: text;
+    background: rgba(255, 255, 255, 0.28);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+  #sel-popup .explanation strong { color: #0f172a; font-weight: 700; }
+  #sel-popup .explanation p { margin: 5px 0; }
+  #sel-popup .explanation p:first-child { margin-top: 0; }
+  #sel-popup .explanation p:last-child { margin-bottom: 0; }
+
+  #sel-popup .footer {
+    display: flex; gap: 4px; margin-top: 6px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06); padding-top: 6px;
+  }
+  #sel-popup .footer button {
+    background: transparent; border: 0; color: #4b5563;
+    padding: 4px 9px; border-radius: 6px; font-size: 11.5px;
+    cursor: pointer;
+    transition: background .12s, color .12s;
+  }
+  #sel-popup .footer button:hover { color: #0f172a; background: rgba(255, 255, 255, 0.55); }
+
+  #sel-popup .loading {
+    padding: 14px; text-align: center; color: #6b7280; font-size: 12px;
+  }
+
+  /* Right pane */
+  #right { background: var(--bg-2); display: flex; flex-direction: column; }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+  .tab {
+    flex: 1; padding: 8px 12px; font-size: 12.5px; color: var(--text-dim);
+    background: transparent; border: 0; border-bottom: 2px solid transparent;
+  }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab-panel { flex: 1; min-height: 0; display: none; flex-direction: column; }
+  .tab-panel.active { display: flex; }
+
+  #messages { flex: 1; overflow: auto; padding: 12px; }
+  .msg { margin-bottom: 14px; }
+  .msg .role {
+    font-size: 11px; color: var(--text-mute); text-transform: uppercase;
+    letter-spacing: .8px; margin-bottom: 4px;
+  }
+  .msg.user .role { color: var(--accent); }
+  .msg.assistant .role { color: var(--accent-2); }
+  .msg .body {
+    background: var(--bg-3); border: 1px solid var(--border);
+    padding: 10px 12px; border-radius: 8px; line-height: 1.6;
+    word-wrap: break-word; overflow-wrap: break-word;
+  }
+  .msg.user .body { background: rgba(94, 123, 255, 0.08); border-color: rgba(94, 123, 255, 0.25); }
+  .msg .body :first-child { margin-top: 0; }
+  .msg .body :last-child { margin-bottom: 0; }
+  .msg .body pre {
+    background: var(--bg); border: 1px solid var(--border); padding: 8px 10px;
+    border-radius: 5px; overflow-x: auto; font-size: 12px;
+  }
+  .msg .body code { background: var(--bg); padding: 1px 5px; border-radius: 3px; font-size: 12.5px; }
+  .msg .body pre code { background: transparent; padding: 0; }
+  .msg .body h1, .msg .body h2, .msg .body h3 { margin: 10px 0 6px; }
+
+  .chat-toolbar {
+    display: flex; gap: 4px; padding: 6px 8px; border-top: 1px solid var(--border);
+    background: var(--bg-2);
+  }
+  .chat-toolbar button {
+    background: var(--bg-3); border: 1px solid var(--border); color: var(--text-dim);
+    padding: 4px 9px; border-radius: 4px; font-size: 11.5px;
+  }
+  .chat-toolbar button:hover { background: var(--bg-4); color: var(--text); }
+
+  #composer { border-top: 1px solid var(--border); padding: 10px; display: flex; gap: 6px; }
+  #composer textarea {
+    flex: 1; min-height: 60px; max-height: 200px; resize: none;
+    background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; color: var(--text);
+  }
+  #composer textarea:focus { outline: none; border-color: var(--accent); }
+  #composer button {
+    background: var(--accent); color: white; border: 0; padding: 0 16px;
+    border-radius: 6px; align-self: stretch; font-weight: 500;
+  }
+  #composer button:hover { background: var(--accent-2); }
+  #composer button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .notes-toolbar {
+    display: flex; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  .notes-toolbar button {
+    background: var(--bg-3); border: 1px solid var(--border); color: var(--text);
+    border-radius: 4px; padding: 4px 9px; font-size: 11.5px;
+  }
+  .notes-toolbar button:hover { background: var(--bg-4); }
+  .notes-toolbar .save-status { margin-left: auto; color: var(--text-mute); font-size: 11px; align-self: center; }
+  #notes-editor {
+    flex: 1; resize: none; border: 0; outline: none;
+    background: var(--bg); color: var(--text); padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 13px; line-height: 1.6;
+  }
+
+  #modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5);
+    display: none; align-items: center; justify-content: center; z-index: 200;
+  }
+  #modal.shown { display: flex; }
+  #modal .box {
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px; min-width: 320px; max-width: 480px;
+  }
+  #modal h3 { margin: 0 0 10px; font-size: 14px; }
+  #modal input {
+    width: 100%; background: var(--bg-3); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; color: var(--text);
+  }
+  #modal .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px; }
+  #modal .actions button {
+    padding: 6px 14px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--bg-3); color: var(--text); font-size: 12.5px;
+  }
+  #modal .actions button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--bg-3); border: 1px solid var(--border); padding: 8px 14px;
+    border-radius: 6px; font-size: 12.5px; z-index: 300; display: none;
+  }
+  #toast.shown { display: block; }
+  #toast.error { border-color: var(--danger); color: var(--danger); }
+
+  #drop-overlay {
+    position: absolute; inset: 0; background: rgba(94, 123, 255, 0.1);
+    border: 2px dashed var(--accent); border-radius: 8px;
+    display: none; align-items: center; justify-content: center;
+    pointer-events: none; z-index: 50; font-size: 16px; color: var(--accent); font-weight: 600;
+  }
+  #drop-overlay.shown { display: flex; }
+
+  .typing { display: inline-block; width: 8px; height: 14px; background: var(--accent); animation: blink 1s steps(2) infinite; vertical-align: text-bottom; }
+  @keyframes blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="brand">Paper Tutor<span class="dot">.</span></div>
+    <div class="spacer"></div>
+    <span class="pill" id="ollama-status">Ollama: …</span>
+    <button class="pill" id="btn-vocab" title="저장한 영단어 보기" style="cursor:pointer;">📚 단어장 <span id="vocab-count-pill" style="opacity:.6;">0</span></button>
+    <select id="model-select" title="모델 선택"></select>
+  </div>
+
+  <div id="main">
+    <div class="pane" id="explorer">
+      <div class="pane-head">
+        <span class="title">Library</span>
+        <button class="icon-btn" id="btn-new-folder" title="새 폴더">+ 폴더</button>
+        <button class="icon-btn" id="btn-upload" title="PDF 업로드">⬆ PDF</button>
+        <button class="icon-btn" id="btn-refresh" title="새로고침">⟳</button>
+      </div>
+      <div id="explorer-tree"></div>
+    </div>
+
+    <div class="resizer" id="resizer-left" title="드래그해서 좌측 패널 너비 조절"></div>
+
+    <div class="pane" id="center">
+      <div class="viewer-toolbar">
+        <span class="title" id="viewer-title">논문을 선택하세요</span>
+        <span class="meta" id="viewer-meta"></span>
+        <button id="btn-prev-page" title="이전 페이지 (←)">◀</button>
+        <span id="page-indicator" class="meta" style="min-width: 64px; text-align: center;">–</span>
+        <button id="btn-next-page" title="다음 페이지 (→)">▶</button>
+        <span class="meta" style="width: 1px; height: 16px; background: var(--border);"></span>
+        <button id="btn-zoom-out" title="축소">−</button>
+        <span id="zoom-label" class="meta" style="min-width: 36px; text-align: center;">120%</span>
+        <button id="btn-zoom-in" title="확대">+</button>
+      </div>
+      <div id="viewer-wrap" tabindex="0">
+        <div id="viewer-empty">
+          <div style="font-size: 36px;">📄</div>
+          <div class="hint">왼쪽에서 논문을 선택하거나 PDF를 드래그해서 업로드하세요.</div>
+        </div>
+        <div id="pages"></div>
+        <div id="drop-overlay">PDF를 놓으면 업로드됩니다</div>
+      </div>
+    </div>
+
+    <div class="resizer" id="resizer-right" title="드래그해서 채팅 패널 너비 조절"></div>
+
+    <div class="pane" id="right">
+      <div class="tabs">
+        <button class="tab active" data-tab="chat">채팅</button>
+        <button class="tab" data-tab="notes">노트</button>
+      </div>
+
+      <div class="tab-panel active" id="chat-panel">
+        <div id="messages"></div>
+        <div class="chat-toolbar">
+          <button id="btn-overview" title="현재 논문의 개요 생성">개요 생성</button>
+          <button id="btn-checkpoint" title="체크포인트 저장">체크포인트</button>
+          <button id="btn-rewind" title="마지막 체크포인트로 되돌리기">되돌리기</button>
+          <button id="btn-debug" title="현재 보낼 프롬프트와 컨텍스트 상태 보기">디버그</button>
+          <span class="meta" id="turn-count" style="margin-left: auto; align-self: center; color: var(--text-mute); font-size: 11px;"></span>
+        </div>
+        <div id="composer">
+          <textarea id="chat-input" placeholder="논문에 대해 질문하세요 (Enter 전송, Shift+Enter 줄바꿈)" disabled></textarea>
+          <button id="btn-send" disabled>전송</button>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="notes-panel">
+        <div class="notes-toolbar">
+          <button id="btn-summary-replace" title="AI 요약 생성 후 노트 교체">AI 요약 (교체)</button>
+          <button id="btn-summary-append" title="AI 요약 생성 후 노트 끝에 추가">AI 요약 (추가)</button>
+          <span class="save-status" id="notes-save-status"></span>
+        </div>
+        <textarea id="notes-editor" placeholder="논문을 선택하면 노트가 여기에 표시됩니다." disabled></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MINI popup: appears near drag selection, just actions -->
+<div id="sel-action-popup">
+  <div class="selection-text" id="sel-action-text"></div>
+  <div class="actions">
+    <button data-mode="word">단어 뜻</button>
+    <button data-mode="sentence">문장 번역</button>
+    <button data-mode="ask">채팅에 질문</button>
+  </div>
+</div>
+
+<!-- DETAIL popup: top-left, persistent, shows explanation + footer -->
+<div id="sel-popup">
+  <div class="selection-text" id="sel-text"></div>
+  <div class="actions">
+    <button data-mode="word">단어 뜻</button>
+    <button data-mode="sentence">문장 번역</button>
+    <button data-mode="ask">채팅에 질문</button>
+  </div>
+  <div class="explanation" id="sel-explanation" style="display:none;"></div>
+  <div class="footer" style="display:none;" id="sel-footer">
+    <button id="sel-vocab-add" style="display:none;">📚 단어장 추가</button>
+    <button id="sel-copy">복사</button>
+    <button id="sel-save-note">노트에 저장</button>
+    <button id="sel-close" style="margin-left:auto;">닫기</button>
+  </div>
+</div>
+
+<input type="file" id="file-input" accept=".pdf" style="display:none;" />
+
+<div id="modal">
+  <div class="box">
+    <h3 id="modal-title"></h3>
+    <input id="modal-input" type="text" />
+    <div class="actions">
+      <button id="modal-cancel">취소</button>
+      <button id="modal-ok" class="primary">확인</button>
+    </div>
+  </div>
+</div>
+
+<div id="debug-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:200; align-items:center; justify-content:center;">
+  <div style="background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:18px; width:min(900px, 92vw); max-height:88vh; display:flex; flex-direction:column;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <h3 style="margin:0; font-size:14px; flex:1;">디버그 — 보낼 프롬프트 / 컨텍스트 상태</h3>
+      <button id="btn-debug-refresh" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:4px 10px; font-size:12px;">새로고침</button>
+      <button id="btn-debug-close" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:4px 10px; font-size:12px;">닫기</button>
+    </div>
+    <div id="debug-summary" style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px 14px; font-size:12px; padding:8px 10px; background:var(--bg-3); border-radius:6px; margin-bottom:10px;"></div>
+    <div style="font-size:11px; color:var(--text-mute); text-transform:uppercase; letter-spacing:.6px; margin-bottom:4px;">SYSTEM PROMPT (실제 전송 문자열)</div>
+    <pre id="debug-prompt" style="flex:1; overflow:auto; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 12px; font-size:11.5px; line-height:1.5; white-space:pre-wrap; word-wrap:break-word; margin:0;"></pre>
+  </div>
+</div>
+
+<div id="vocab-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:200; align-items:center; justify-content:center;">
+  <div style="background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:18px; width:min(760px, 92vw); max-height:88vh; display:flex; flex-direction:column;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <h3 style="margin:0; font-size:14px; flex:1;">📚 단어장 <span id="vocab-count" style="color:var(--text-mute); font-weight:400;">(0)</span></h3>
+      <input id="vocab-search" placeholder="검색…" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); padding:5px 10px; border-radius:5px; font-size:12.5px; width:180px;">
+      <button id="btn-vocab-close" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:5px 12px; font-size:12px;">닫기</button>
+    </div>
+    <div id="vocab-list" style="flex:1; overflow:auto; margin:0 -4px;"></div>
+    <div id="vocab-empty" style="display:none; padding:40px; text-align:center; color:var(--text-mute); font-size:13px;">
+      아직 저장한 단어가 없어요.<br>
+      PDF에서 모르는 단어를 드래그 → 단어 뜻 → 📚 단어장 추가로 모아보세요.
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+
+<script type="module">
+  import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs";
+  window._pdfjsLib = pdfjsLib;
+  window.dispatchEvent(new Event("pdfjs-ready"));
+</script>
+
+<script>
+const state = {
+  models: [],
+  selectedModel: null,
+  currentPaperId: null,
+  currentPaper: null,
+  pdfDoc: null,
+  scale: 1.8,  // 120% default (zoom-label = scale / 1.5 * 100)
+  detailSelectionText: null,
+  isStreaming: false,
+  notesDirty: false,
+  notesSaveTimer: null,
+  selDebounceTimer: null,
+  lastSelectionRect: null,
+  lastSelectionText: "",
+  lastExplanation: "",
+  lastExplainMode: null,
+  vocabCount: 0,
+};
+
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+function toast(msg, isErr = false) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.toggle("error", isErr);
+  el.classList.add("shown");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove("shown"), 2400);
+}
+
+function prompt2(title, initial = "") {
+  return new Promise((resolve) => {
+    $("#modal-title").textContent = title;
+    $("#modal-input").value = initial;
+    $("#modal").classList.add("shown");
+    setTimeout(() => $("#modal-input").focus(), 50);
+    const ok = $("#modal-ok"), cancel = $("#modal-cancel"), input = $("#modal-input");
+    const close = (val) => {
+      $("#modal").classList.remove("shown");
+      ok.onclick = cancel.onclick = input.onkeydown = null;
+      resolve(val);
+    };
+    ok.onclick = () => close(input.value.trim());
+    cancel.onclick = () => close(null);
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") close(input.value.trim());
+      if (e.key === "Escape") close(null);
+    };
+  });
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  let data = null;
+  try { data = await r.json(); } catch (e) { /* not json */ }
+  if (!r.ok) throw new Error((data && data.error) || `${r.status} ${r.statusText}`);
+  return data;
+}
+
+function renderMarkdown(text) {
+  return marked.parse(text || "", { breaks: true });
+}
+
+function renderMathIn(el) {
+  if (window.renderMathInElement) {
+    renderMathInElement(el, {
+      delimiters: [
+        { left: "$$", right: "$$", display: true },
+        { left: "$", right: "$", display: false },
+        { left: "\\(", right: "\\)", display: false },
+        { left: "\\[", right: "\\]", display: true },
+      ],
+      throwOnError: false,
+    });
+  }
+}
+
+// Models
+async function loadModels() {
+  try {
+    const data = await api("/api/models");
+    state.models = data.models || [];
+    const sel = $("#model-select");
+    sel.innerHTML = "";
+    if (state.models.length === 0) {
+      $("#ollama-status").textContent = "Ollama: 모델 없음";
+      $("#ollama-status").className = "pill status-bad";
+      return;
+    }
+    state.models.forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m; o.textContent = m;
+      sel.appendChild(o);
+    });
+    state.selectedModel = state.models.includes(data.default) ? data.default : state.models[0];
+    sel.value = state.selectedModel;
+    sel.onchange = () => { state.selectedModel = sel.value; };
+    $("#ollama-status").textContent = "Ollama: 연결됨";
+    $("#ollama-status").className = "pill status-ok";
+  } catch (e) {
+    $("#ollama-status").textContent = "Ollama: 연결 실패";
+    $("#ollama-status").className = "pill status-bad";
+  }
+}
+
+// Tree
+async function loadTree() {
+  const data = await api("/api/library/tree");
+  renderTree(data.tree);
+}
+
+function renderTree(root) {
+  const container = $("#explorer-tree");
+  container.innerHTML = "";
+  (root.children || []).forEach((child) => {
+    container.appendChild(renderTreeNode(child, 0));
+  });
+}
+
+function renderTreeNode(node, depth) {
+  const wrap = document.createElement("div");
+  const row = document.createElement("div");
+  row.className = "tree-row";
+  row.style.paddingLeft = (6 + depth * 14) + "px";
+
+  if (node.type === "folder") {
+    const isOpen = depth === 0;
+    const chev = document.createElement("span");
+    chev.className = "chev";
+    chev.textContent = isOpen ? "▾" : "▸";
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.textContent = "📁";
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = node.name;
+    row.append(chev, icon, label);
+
+    const children = document.createElement("div");
+    children.className = "tree-children" + (isOpen ? " open" : "");
+    (node.children || []).forEach((c) => {
+      children.appendChild(renderTreeNode(c, depth + 1));
+    });
+
+    row.onclick = (e) => {
+      e.stopPropagation();
+      const open = !children.classList.contains("open");
+      children.classList.toggle("open", open);
+      chev.textContent = open ? "▾" : "▸";
+    };
+
+    const actions = document.createElement("span");
+    actions.className = "row-actions";
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "+"; addBtn.title = "하위 폴더";
+    addBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const name = await prompt2("새 폴더 이름", "");
+      if (!name) return;
+      try {
+        await api("/api/library/folder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parent: node.path, name }),
+        });
+        await loadTree();
+      } catch (e) { toast(e.message, true); }
+    };
+    const upBtn = document.createElement("button");
+    upBtn.textContent = "⬆"; upBtn.title = "이 폴더에 업로드";
+    upBtn.onclick = (e) => {
+      e.stopPropagation();
+      triggerUpload(node.path);
+    };
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "✕"; delBtn.title = "폴더 삭제";
+    delBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`'${node.name}' 폴더와 그 안의 모든 논문을 삭제할까요?`)) return;
+      try {
+        await api("/api/library/folder", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: node.path }),
+        });
+        await loadTree();
+      } catch (e) { toast(e.message, true); }
+    };
+    actions.append(addBtn, upBtn, delBtn);
+    row.appendChild(actions);
+
+    wrap.append(row, children);
+  } else {
+    const chev = document.createElement("span");
+    chev.className = "chev"; chev.textContent = "·";
+    const icon = document.createElement("span");
+    icon.className = "icon"; icon.textContent = "📄";
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = node.title;
+    label.title = node.title;
+    row.append(chev, icon, label);
+
+    if (state.currentPaperId === node.id) row.classList.add("selected");
+    row.onclick = (e) => {
+      e.stopPropagation();
+      openPaper(node.id);
+    };
+
+    const actions = document.createElement("span");
+    actions.className = "row-actions";
+    const renameBtn = document.createElement("button");
+    renameBtn.textContent = "✎"; renameBtn.title = "이름 변경";
+    renameBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const newTitle = await prompt2("새 제목", node.title);
+      if (!newTitle) return;
+      try {
+        await api(`/api/papers/${node.id}/rename`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: newTitle }),
+        });
+        await loadTree();
+        if (state.currentPaperId === node.id) {
+          state.currentPaper.meta.title = newTitle;
+          $("#viewer-title").textContent = newTitle;
+        }
+      } catch (e) { toast(e.message, true); }
+    };
+    const moveBtn = document.createElement("button");
+    moveBtn.textContent = "↪"; moveBtn.title = "이동";
+    moveBtn.onclick = async (e) => {
+      e.stopPropagation();
+      const target = await prompt2("이동할 폴더 경로 (예: Research/NLP)", node.folder || "Default");
+      if (target == null) return;
+      try {
+        await api(`/api/papers/${node.id}/move`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target_folder: target }),
+        });
+        await loadTree();
+      } catch (e) { toast(e.message, true); }
+    };
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "✕"; delBtn.title = "삭제";
+    delBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`'${node.title}'을(를) 삭제할까요?`)) return;
+      try {
+        await api(`/api/papers/${node.id}`, { method: "DELETE" });
+        if (state.currentPaperId === node.id) clearViewer();
+        await loadTree();
+      } catch (e) { toast(e.message, true); }
+    };
+    actions.append(renameBtn, moveBtn, delBtn);
+    row.appendChild(actions);
+
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+// Upload
+let pendingUploadFolder = "Default";
+function triggerUpload(folder) {
+  pendingUploadFolder = folder || "Default";
+  $("#file-input").click();
+}
+
+$("#file-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  await uploadFile(file, pendingUploadFolder);
+});
+
+async function uploadFile(file, folder) {
+  if (!file.name.toLowerCase().endsWith(".pdf")) {
+    return toast("PDF 파일만 업로드할 수 있습니다.", true);
+  }
+  toast("업로드 및 변환 중…");
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("folder", folder || "Default");
+  try {
+    const data = await api("/api/library/upload", { method: "POST", body: fd });
+    await loadTree();
+    await openPaper(data.paper.id);
+    // Auto-generate overview for newly uploaded papers (empty chat).
+    // Existing papers re-opened from the tree keep their saved conversation.
+    if (state.currentPaper && (state.currentPaper.chat.messages || []).length === 0) {
+      toast("업로드 완료. 개요 생성 중… (작은 모델 사용, ~10초)");
+      await sendMessage("이 논문을 전반적으로 정리해줘.", {
+        isOverview: true,
+        fastOverview: true,  // backend routes to OVERVIEW_MODEL (gemma4:e4b)
+      });
+    } else {
+      toast("업로드 완료");
+    }
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+const viewerWrap = $("#viewer-wrap");
+viewerWrap.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  $("#drop-overlay").classList.add("shown");
+});
+viewerWrap.addEventListener("dragleave", (e) => {
+  if (e.target === viewerWrap) $("#drop-overlay").classList.remove("shown");
+});
+viewerWrap.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  $("#drop-overlay").classList.remove("shown");
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  await uploadFile(file, state.currentPaper ? state.currentPaper.folder : "Default");
+});
+
+// Open paper
+async function openPaper(paperId) {
+  try {
+    const data = await api(`/api/papers/${paperId}`);
+    state.currentPaperId = paperId;
+    state.currentPaper = data;
+    $("#viewer-title").textContent = data.meta.title || data.meta.original_filename;
+    $("#viewer-meta").textContent = `${(data.meta.char_count / 1000).toFixed(1)}k chars · ~${(data.meta.approx_tokens / 1000).toFixed(1)}k tokens`;
+    $("#viewer-empty").style.display = "none";
+    $("#chat-input").disabled = false;
+    $("#btn-send").disabled = false;
+    $("#notes-editor").disabled = false;
+
+    renderMessages(data.chat.messages || []);
+    $("#notes-editor").value = data.notes_md || "";
+    state.notesDirty = false;
+    $("#notes-save-status").textContent = "저장됨";
+    await renderPdf(paperId);
+
+    await loadTree();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function clearViewer() {
+  state.currentPaperId = null;
+  state.currentPaper = null;
+  state.pdfDoc = null;
+  $("#viewer-title").textContent = "논문을 선택하세요";
+  $("#viewer-meta").textContent = "";
+  $("#viewer-empty").style.display = "flex";
+  $("#pages").innerHTML = "";
+  $("#chat-input").disabled = true;
+  $("#btn-send").disabled = true;
+  $("#notes-editor").disabled = true;
+  $("#notes-editor").value = "";
+  $("#messages").innerHTML = "";
+}
+
+// PDF
+async function ensurePdfjs() {
+  if (window._pdfjsLib) return window._pdfjsLib;
+  await new Promise((r) => window.addEventListener("pdfjs-ready", r, { once: true }));
+  return window._pdfjsLib;
+}
+
+async function renderPdf(paperId) {
+  const pdfjsLib = await ensurePdfjs();
+  $("#pages").innerHTML = "";
+  const loadingTask = pdfjsLib.getDocument({ url: `/api/papers/${paperId}/pdf` });
+  state.pdfDoc = await loadingTask.promise;
+  await renderAllPages();
+}
+
+async function renderOnePage(pageNum, pdfjsLib) {
+  const page = await state.pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({ scale: state.scale });
+
+  const block = document.createElement("div");
+  block.className = "page-block";
+  block.dataset.pageNum = String(pageNum);
+  block.style.width = viewport.width + "px";
+  block.style.height = viewport.height + "px";
+
+  const canvas = document.createElement("canvas");
+  const outputScale = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(viewport.width * outputScale);
+  canvas.height = Math.floor(viewport.height * outputScale);
+  canvas.style.width = viewport.width + "px";
+  canvas.style.height = viewport.height + "px";
+  const ctx = canvas.getContext("2d");
+  block.appendChild(canvas);
+
+  const textLayerDiv = document.createElement("div");
+  textLayerDiv.className = "text-layer";
+  textLayerDiv.style.width = viewport.width + "px";
+  textLayerDiv.style.height = viewport.height + "px";
+  textLayerDiv.style.setProperty("--scale-factor", String(viewport.scale));
+  block.appendChild(textLayerDiv);
+
+  $("#pages").appendChild(block);
+
+  const transform = outputScale !== 1
+    ? [outputScale, 0, 0, outputScale, 0, 0]
+    : null;
+
+  try {
+    await page.render({ canvasContext: ctx, viewport, transform }).promise;
+  } catch (e) {
+    console.error(`Page ${pageNum} render failed`, e);
+  }
+
+  try {
+    const textContent = await page.getTextContent();
+    if (pdfjsLib.TextLayer) {
+      // Modern pdf.js 4.x API
+      const tl = new pdfjsLib.TextLayer({
+        textContentSource: textContent,
+        container: textLayerDiv,
+        viewport,
+      });
+      await tl.render();
+    } else if (pdfjsLib.renderTextLayer) {
+      const task = pdfjsLib.renderTextLayer({
+        textContentSource: textContent,
+        container: textLayerDiv,
+        viewport,
+      });
+      await (task.promise || task);
+    }
+  } catch (e) {
+    console.error(`Page ${pageNum} text layer failed`, e);
+  }
+}
+
+async function renderAllPages() {
+  if (!state.pdfDoc) return;
+  const pdfjsLib = await ensurePdfjs();
+  $("#pages").innerHTML = "";
+  for (let i = 1; i <= state.pdfDoc.numPages; i++) {
+    await renderOnePage(i, pdfjsLib);
+  }
+  $("#viewer-wrap").focus();
+  updatePageIndicator();
+}
+
+function updateZoomLabel() {
+  $("#zoom-label").textContent = Math.round(state.scale / 1.5 * 100) + "%";
+}
+
+$("#btn-zoom-in").onclick = () => {
+  state.scale = Math.min(3.0, state.scale + 0.15);
+  updateZoomLabel();
+  renderAllPages();
+};
+$("#btn-zoom-out").onclick = () => {
+  state.scale = Math.max(0.5, state.scale - 0.15);
+  updateZoomLabel();
+  renderAllPages();
+};
+
+// ── PDF zoom: Cmd/Ctrl + wheel ──
+let zoomRenderTimer = null;
+function scheduleZoomRender() {
+  clearTimeout(zoomRenderTimer);
+  zoomRenderTimer = setTimeout(() => renderAllPages(), 180);
+}
+viewerWrap.addEventListener("wheel", (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (!state.pdfDoc) return;
+  e.preventDefault();
+  const delta = e.deltaY > 0 ? -0.1 : 0.1;
+  state.scale = Math.max(0.5, Math.min(3.0, state.scale + delta));
+  updateZoomLabel();
+  scheduleZoomRender();
+}, { passive: false });
+
+// ── PDF zoom: Cmd/Ctrl + drag (수직 드래그로 줌) ──
+let zoomDrag = null;
+viewerWrap.addEventListener("mousedown", (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (!state.pdfDoc) return;
+  e.preventDefault();
+  e.stopPropagation();
+  zoomDrag = { startY: e.clientY, startScale: state.scale };
+  document.body.style.cursor = "ns-resize";
+  document.body.style.userSelect = "none";
+}, true);  // capture phase so we beat the text-selection mousedown
+document.addEventListener("mousemove", (e) => {
+  if (!zoomDrag) return;
+  const dy = e.clientY - zoomDrag.startY;
+  // 위로 끌면 확대, 아래로 끌면 축소. 200px = scale 1.0 변화
+  const next = zoomDrag.startScale - dy * 0.005;
+  state.scale = Math.max(0.5, Math.min(3.0, next));
+  updateZoomLabel();
+});
+document.addEventListener("mouseup", () => {
+  if (!zoomDrag) return;
+  zoomDrag = null;
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+  renderAllPages();
+});
+
+// ── Resizable panels (left explorer + right chat) ──
+function setupResizer(handleEl, side) {
+  const cssVar = side === "left" ? "--left-w" : "--right-w";
+  const storeKey = side === "left" ? "paper-tutor:left-w" : "paper-tutor:right-w";
+  const minPx = side === "left" ? 180 : 280;
+  const maxPx = side === "left" ? 500 : 800;
+
+  let dragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  handleEl.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startX = e.clientX;
+    const current = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
+    startWidth = parseInt(current, 10) || (side === "left" ? 260 : 380);
+    handleEl.classList.add("dragging");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const next = side === "left" ? startWidth + dx : startWidth - dx;
+    const clamped = Math.max(minPx, Math.min(maxPx, next));
+    document.documentElement.style.setProperty(cssVar, clamped + "px");
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    handleEl.classList.remove("dragging");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    const w = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
+    try { localStorage.setItem(storeKey, w); } catch {}
+  });
+
+  // Double-click to reset to default
+  handleEl.addEventListener("dblclick", () => {
+    document.documentElement.style.removeProperty(cssVar);
+    try { localStorage.removeItem(storeKey); } catch {}
+  });
+}
+
+// Restore persisted widths before wiring resizers
+(function restorePaneWidths() {
+  try {
+    const lw = localStorage.getItem("paper-tutor:left-w");
+    const rw = localStorage.getItem("paper-tutor:right-w");
+    if (lw) document.documentElement.style.setProperty("--left-w", lw);
+    if (rw) document.documentElement.style.setProperty("--right-w", rw);
+  } catch {}
+})();
+setupResizer($("#resizer-left"), "left");
+setupResizer($("#resizer-right"), "right");
+
+// Page navigation helpers
+function getCurrentPageNum() {
+  const wrap = $("#viewer-wrap");
+  const pages = $$(".page-block");
+  if (!pages.length) return 0;
+  const wrapTop = wrap.getBoundingClientRect().top;
+  for (let i = 0; i < pages.length; i++) {
+    const r = pages[i].getBoundingClientRect();
+    if (r.bottom > wrapTop + 60) return i + 1;
+  }
+  return pages.length;
+}
+
+function scrollToPage(n) {
+  const pages = $$(".page-block");
+  if (!pages.length) return;
+  const idx = Math.max(0, Math.min(pages.length - 1, n - 1));
+  const wrap = $("#viewer-wrap");
+  const page = pages[idx];
+  // Scroll to page top with a small margin
+  const offset = page.offsetTop - 12;
+  wrap.scrollTo({ top: offset, behavior: "smooth" });
+  setTimeout(updatePageIndicator, 350);
+}
+
+function updatePageIndicator() {
+  const total = state.pdfDoc ? state.pdfDoc.numPages : 0;
+  if (!total) { $("#page-indicator").textContent = "–"; return; }
+  const cur = getCurrentPageNum();
+  $("#page-indicator").textContent = `${cur} / ${total}`;
+}
+
+$("#btn-prev-page").onclick = () => scrollToPage(getCurrentPageNum() - 1);
+$("#btn-next-page").onclick = () => scrollToPage(getCurrentPageNum() + 1);
+
+$("#viewer-wrap").addEventListener("scroll", () => {
+  clearTimeout(state._pageIndTimer);
+  state._pageIndTimer = setTimeout(updatePageIndicator, 80);
+});
+
+// Keyboard navigation — active when focus is on viewer (or nothing input-like)
+document.addEventListener("keydown", (e) => {
+  const ae = document.activeElement;
+  const inEditable = ae && (ae.tagName === "TEXTAREA" || ae.tagName === "INPUT" || ae.isContentEditable);
+  if (inEditable) return;
+  if (!state.pdfDoc) return;
+  const wrap = $("#viewer-wrap");
+
+  switch (e.key) {
+    case "ArrowDown":
+      e.preventDefault();
+      wrap.scrollBy({ top: 80, behavior: "auto" });
+      break;
+    case "ArrowUp":
+      e.preventDefault();
+      wrap.scrollBy({ top: -80, behavior: "auto" });
+      break;
+    case "PageDown":
+    case " ": // Space
+      e.preventDefault();
+      wrap.scrollBy({ top: wrap.clientHeight * 0.9, behavior: "smooth" });
+      break;
+    case "PageUp":
+      e.preventDefault();
+      wrap.scrollBy({ top: -wrap.clientHeight * 0.9, behavior: "smooth" });
+      break;
+    case "ArrowRight":
+      e.preventDefault();
+      scrollToPage(getCurrentPageNum() + 1);
+      break;
+    case "ArrowLeft":
+      e.preventDefault();
+      scrollToPage(getCurrentPageNum() - 1);
+      break;
+    case "Home":
+      e.preventDefault();
+      wrap.scrollTo({ top: 0, behavior: "smooth" });
+      break;
+    case "End":
+      e.preventDefault();
+      wrap.scrollTo({ top: wrap.scrollHeight, behavior: "smooth" });
+      break;
+  }
+});
+
+// Click in viewer focuses it (so keyboard nav works without explicit tab)
+$("#viewer-wrap").addEventListener("mousedown", () => {
+  // Defer so text selection still works
+  setTimeout(() => {
+    const ae = document.activeElement;
+    if (!ae || (ae.tagName !== "TEXTAREA" && ae.tagName !== "INPUT")) {
+      $("#viewer-wrap").focus({ preventScroll: true });
+    }
+  }, 0);
+});
+
+// Selection popup
+const popup = $("#sel-popup");
+
+function getSelectionInViewer() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const anchor = range.startContainer;
+  const anchorEl = anchor.nodeType === 3 ? anchor.parentElement : anchor;
+  if (!viewerWrap.contains(anchorEl)) return null;
+  const text = sel.toString().trim();
+  if (!text) return null;
+  const rect = range.getBoundingClientRect();
+  return { text, rect };
+}
+
+const actionPopup = $("#sel-action-popup");
+
+// Default position for DETAIL popup: just right of the explorer pane, below
+// the topbar. Only applied on first open; subsequent selections preserve
+// the user's dragged position so it doesn't jump around.
+function positionPopupDefault() {
+  const explorerWidth = parseInt(
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--left-w") || "260",
+    10
+  );
+  popup.style.left = (explorerWidth + 18) + "px";
+  popup.style.top = "56px";
+}
+
+// MINI popup positions near the user's selection rect (above by default,
+// flips below if no room).
+function positionMini(rect) {
+  const w = actionPopup.offsetWidth || 300;
+  const h = actionPopup.offsetHeight || 80;
+  let left = rect.left + rect.width / 2 - w / 2;
+  let top = rect.top - h - 10;
+  if (left < 8) left = 8;
+  if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+  if (top < 8) top = rect.bottom + 10;
+  actionPopup.style.left = left + "px";
+  actionPopup.style.top = top + "px";
+}
+
+function hidePopup() {
+  popup.classList.remove("shown");
+  $("#sel-explanation").style.display = "none";
+  $("#sel-footer").style.display = "none";
+  $("#sel-explanation").textContent = "";
+}
+function hideMini() { actionPopup.classList.remove("shown"); }
+
+document.addEventListener("mouseup", (e) => {
+  // Ignore mouseups inside either popup (drag-release, clicks).
+  if (popup.contains(e.target) || actionPopup.contains(e.target)) return;
+  clearTimeout(state.selDebounceTimer);
+  state.selDebounceTimer = setTimeout(() => {
+    const s = getSelectionInViewer();
+    if (!s || !state.currentPaperId) return;
+    // MINI: fresh on every selection — appears near the drag.
+    state.lastSelectionText = s.text;
+    state.lastSelectionRect = s.rect;
+    $("#sel-action-text").textContent =
+      s.text.length > 80 ? s.text.slice(0, 80) + "…" : s.text;
+    actionPopup.classList.add("shown");
+    positionMini(s.rect);
+  }, 80);
+});
+
+// Hide MINI on any outside click. DETAIL keeps living its own life.
+document.addEventListener("mousedown", (e) => {
+  if (actionPopup.contains(e.target)) return;
+  hideMini();
+});
+
+// Esc: close MINI first if open, otherwise close DETAIL.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
+  if (actionPopup.classList.contains("shown")) {
+    hideMini();
+    e.preventDefault();
+  } else if (popup.classList.contains("shown")) {
+    hidePopup();
+    e.preventDefault();
+  }
+});
+
+// Shared action button handler. MINI buttons use the latest dragged selection
+// (state.lastSelectionText) and trigger DETAIL to open with the result.
+// DETAIL buttons re-run on the selection DETAIL is already showing
+// (state.detailSelectionText), so the two popups operate independently.
+async function handleActionClick(mode, selectionText, fromMini) {
+  if (!selectionText) return;
+  if (mode === "ask") {
+    $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "chat"));
+    $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === "chat-panel"));
+    $("#chat-input").value = `다음 부분을 설명해줘:\n\n> ${selectionText}\n\n`;
+    $("#chat-input").focus();
+    if (fromMini) hideMini();
+    return;
+  }
+  if (fromMini) hideMini();
+  // Mirror the selection into DETAIL state + UI, then run explain.
+  state.detailSelectionText = selectionText;
+  $("#sel-text").textContent =
+    selectionText.length > 200 ? selectionText.slice(0, 200) + "…" : selectionText;
+  $("#sel-explanation").style.display = "none";
+  $("#sel-footer").style.display = "none";
+  $("#sel-explanation").textContent = "";
+  if (!popup.classList.contains("shown")) {
+    positionPopupDefault();
+    popup.classList.add("shown");
+  }
+  await explainSelection(mode);
+}
+
+// Wire MINI action buttons (use latest dragged selection)
+actionPopup.querySelectorAll(".actions button").forEach((btn) => {
+  btn.onclick = () => handleActionClick(btn.dataset.mode, state.lastSelectionText, true);
+});
+
+// Wire DETAIL action buttons (use the selection DETAIL is currently displaying)
+popup.querySelectorAll(".actions button").forEach((btn) => {
+  btn.onclick = () => handleActionClick(btn.dataset.mode, state.detailSelectionText, false);
+});
+
+async function explainSelection(mode) {
+  const explEl = $("#sel-explanation");
+  explEl.style.display = "block";
+  explEl.innerHTML = `<div class="loading">설명을 생성 중...</div>`;
+  $("#sel-footer").style.display = "none";
+  try {
+    // Intentionally NOT sending state.selectedModel — the explain endpoint
+    // picks a fast small model (gemma3:4b by default) for low latency.
+    const data = await api(`/api/papers/${state.currentPaperId}/explain`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        selection: state.detailSelectionText,
+        mode,
+      }),
+    });
+    explEl.textContent = data.explanation;
+    renderMathIn(explEl);
+    state.lastExplanation = data.explanation;
+    state.lastExplainMode = data.mode || mode;
+    $("#sel-footer").style.display = "flex";
+    // "단어장 추가" only for word mode
+    $("#sel-vocab-add").style.display = state.lastExplainMode === "word" ? "" : "none";
+  } catch (e) {
+    explEl.innerHTML = `<div class="loading" style="color: var(--danger);">${e.message}</div>`;
+  }
+}
+
+$("#sel-copy").onclick = () => {
+  const t = $("#sel-explanation").textContent;
+  navigator.clipboard.writeText(t).then(() => toast("복사됨"));
+};
+$("#sel-save-note").onclick = () => {
+  const t = $("#sel-explanation").textContent;
+  if (!t) return;
+  const editor = $("#notes-editor");
+  const block = `\n\n> ${state.detailSelectionText}\n\n${t}\n`;
+  editor.value = (editor.value || "") + block;
+  state.notesDirty = true;
+  scheduleNotesSave();
+  toast("노트에 저장됨");
+};
+$("#sel-close").onclick = hidePopup;
+
+// ── 팝업 드래그 이동 ──
+let popupDrag = null;
+popup.addEventListener("mousedown", (e) => {
+  // 버튼/입력 요소는 드래그 시작 안 함 (클릭 보존)
+  if (e.target.closest("button, input, textarea")) return;
+  // 설명 영역 안에서는 텍스트 선택을 위해 드래그 시작 안 함
+  if (e.target.closest(".explanation")) return;
+  const rect = popup.getBoundingClientRect();
+  popupDrag = {
+    offsetX: e.clientX - rect.left,
+    offsetY: e.clientY - rect.top,
+  };
+  popup.classList.add("dragging");
+  document.body.style.userSelect = "none";
+  e.preventDefault();
+});
+document.addEventListener("mousemove", (e) => {
+  if (!popupDrag) return;
+  const left = e.clientX - popupDrag.offsetX;
+  const top = e.clientY - popupDrag.offsetY;
+  // 화면 밖으로 나가지 않게 클램프
+  const maxLeft = window.innerWidth - popup.offsetWidth - 4;
+  const maxTop = window.innerHeight - popup.offsetHeight - 4;
+  popup.style.left = Math.max(4, Math.min(maxLeft, left)) + "px";
+  popup.style.top = Math.max(4, Math.min(maxTop, top)) + "px";
+});
+document.addEventListener("mouseup", () => {
+  if (!popupDrag) return;
+  popupDrag = null;
+  popup.classList.remove("dragging");
+  document.body.style.userSelect = "";
+});
+
+// 단어장 추가 (word 모드 전용) — uses the selection currently shown in DETAIL
+$("#sel-vocab-add").onclick = async () => {
+  if (!state.detailSelectionText || !state.lastExplanation) return;
+  try {
+    const data = await api("/api/vocabulary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        word: state.detailSelectionText,
+        selection: state.detailSelectionText,
+        explanation: state.lastExplanation,
+        paper_id: state.currentPaperId,
+        paper_title: state.currentPaper ? state.currentPaper.meta.title : null,
+      }),
+    });
+    state.vocabCount = data.count;
+    updateVocabCount();
+    toast(data.was_new ? "단어장에 저장됨" : "기존 항목 업데이트됨");
+  } catch (e) { toast(e.message, true); }
+};
+
+// ── 단어장 모달 ──
+async function updateVocabCount() {
+  try {
+    const d = await api("/api/vocabulary");
+    state.vocabCount = (d.words || []).length;
+  } catch (e) { /* ignore */ }
+  $("#vocab-count-pill").textContent = state.vocabCount;
+  $("#vocab-count").textContent = `(${state.vocabCount})`;
+}
+
+let vocabCache = [];
+
+async function openVocabModal() {
+  $("#vocab-modal").style.display = "flex";
+  $("#vocab-search").value = "";
+  await loadVocabList();
+}
+
+async function loadVocabList() {
+  try {
+    const d = await api("/api/vocabulary");
+    vocabCache = d.words || [];
+    state.vocabCount = vocabCache.length;
+    updateVocabCount();
+    renderVocabList(vocabCache);
+  } catch (e) {
+    $("#vocab-list").innerHTML = `<div style="padding:20px; color:var(--danger);">${e.message}</div>`;
+  }
+}
+
+function renderVocabList(words) {
+  const listEl = $("#vocab-list");
+  const emptyEl = $("#vocab-empty");
+  if (!words.length) {
+    listEl.innerHTML = "";
+    emptyEl.style.display = "block";
+    return;
+  }
+  emptyEl.style.display = "none";
+  listEl.innerHTML = "";
+  words.forEach((w, originalIdx) => {
+    // originalIdx here is the index in the filtered list, but we need index in the full vocabCache for delete.
+    // Look up actual index in cache by reference.
+    const cacheIdx = vocabCache.indexOf(w);
+    const entry = document.createElement("div");
+    entry.style.cssText = "border:1px solid var(--border); border-radius:6px; margin:6px 4px; background:var(--bg-3);";
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer;";
+    const wordSpan = document.createElement("span");
+    wordSpan.style.cssText = "font-weight:600; color:var(--text); font-size:14px;";
+    wordSpan.textContent = w.word;
+    const paperSpan = document.createElement("span");
+    paperSpan.style.cssText = "font-size:11px; color:var(--text-mute); flex:1;";
+    const dt = new Date(w.added_at * 1000);
+    const dateStr = `${dt.getMonth() + 1}/${dt.getDate()}`;
+    paperSpan.textContent = `${w.paper_title || "—"} · ${dateStr}`;
+    const expandSpan = document.createElement("span");
+    expandSpan.style.cssText = "color:var(--text-mute); font-size:11px;";
+    expandSpan.textContent = "▾";
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "✕";
+    delBtn.style.cssText = "background:transparent; border:0; color:var(--text-mute); padding:2px 8px; border-radius:4px; font-size:14px;";
+    delBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`'${w.word}'을(를) 단어장에서 지울까요?`)) return;
+      try {
+        await api(`/api/vocabulary/${cacheIdx}`, { method: "DELETE" });
+        await loadVocabList();
+      } catch (e) { toast(e.message, true); }
+    };
+    header.append(wordSpan, paperSpan, expandSpan, delBtn);
+
+    const body = document.createElement("div");
+    body.style.cssText = "padding:4px 12px 10px; font-size:12.5px; color:var(--text); line-height:1.6; white-space:pre-wrap; border-top:1px solid var(--border); display:none;";
+    body.textContent = w.explanation;
+
+    header.onclick = () => {
+      const open = body.style.display === "none";
+      body.style.display = open ? "block" : "none";
+      expandSpan.textContent = open ? "▴" : "▾";
+    };
+
+    entry.append(header, body);
+    listEl.appendChild(entry);
+  });
+}
+
+$("#btn-vocab").onclick = openVocabModal;
+$("#btn-vocab-close").onclick = () => { $("#vocab-modal").style.display = "none"; };
+$("#vocab-modal").addEventListener("click", (e) => {
+  if (e.target.id === "vocab-modal") $("#vocab-modal").style.display = "none";
+});
+$("#vocab-search").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) return renderVocabList(vocabCache);
+  const filtered = vocabCache.filter(
+    (w) =>
+      w.word.toLowerCase().includes(q) ||
+      (w.explanation || "").toLowerCase().includes(q) ||
+      (w.paper_title || "").toLowerCase().includes(q)
+  );
+  renderVocabList(filtered);
+});
+
+// Chat
+function renderMessages(messages) {
+  const box = $("#messages");
+  box.innerHTML = "";
+  messages.forEach((m) => appendMessage(m.role, m.content, false));
+  $("#turn-count").textContent = `${Math.floor(messages.length / 2)} turns`;
+  box.scrollTop = box.scrollHeight;
+}
+
+function appendMessage(role, content, scroll = true) {
+  const box = $("#messages");
+  const div = document.createElement("div");
+  div.className = `msg ${role}`;
+  const roleLabel = role === "user" ? "YOU" : role === "assistant" ? "TUTOR" : role.toUpperCase();
+  div.innerHTML = `<div class="role">${roleLabel}</div><div class="body"></div>`;
+  const body = div.querySelector(".body");
+  body.innerHTML = renderMarkdown(content);
+  renderMathIn(body);
+  box.appendChild(div);
+  if (scroll) box.scrollTop = box.scrollHeight;
+  return body;
+}
+
+async function sendMessage(text, opts = {}) {
+  if (!state.currentPaperId || !text) return;
+  if (state.isStreaming) return;
+  state.isStreaming = true;
+  $("#btn-send").disabled = true;
+  $("#chat-input").disabled = true;
+
+  if (!opts.isOverview) appendMessage("user", text);
+  const assistantBody = appendMessage("assistant", "");
+  assistantBody.innerHTML = '<span class="typing"></span>';
+  let buffer = "";
+
+  try {
+    const resp = await fetch(`/api/papers/${state.currentPaperId}/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: text,
+        // Don't lock the auto-overview to user's selected (heavy) model.
+        // Backend picks OVERVIEW_MODEL when fast_overview is true.
+        model: opts.fastOverview ? null : state.selectedModel,
+        overview: !!opts.isOverview,
+        fast_overview: !!opts.fastOverview,
+      }),
+    });
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let partial = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      partial += decoder.decode(value, { stream: true });
+      const lines = partial.split("\n\n");
+      partial = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6);
+        let obj;
+        try { obj = JSON.parse(payload); } catch { continue; }
+        if (obj.error) throw new Error(obj.error);
+        if (obj.content) {
+          buffer += obj.content;
+          assistantBody.innerHTML = renderMarkdown(buffer) + '<span class="typing"></span>';
+          $("#messages").scrollTop = $("#messages").scrollHeight;
+        }
+        if (obj.done) {
+          assistantBody.innerHTML = renderMarkdown(buffer);
+          renderMathIn(assistantBody);
+          $("#turn-count").textContent = `${obj.turn_count} turns`;
+        }
+      }
+    }
+  } catch (e) {
+    assistantBody.innerHTML = `<span style="color: var(--danger);">오류: ${e.message}</span>`;
+  } finally {
+    state.isStreaming = false;
+    $("#btn-send").disabled = false;
+    $("#chat-input").disabled = false;
+    $("#chat-input").focus();
+  }
+}
+
+$("#chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    submitChat();
+  }
+});
+$("#btn-send").onclick = submitChat;
+
+function submitChat() {
+  const ta = $("#chat-input");
+  const text = ta.value.trim();
+  if (!text) return;
+  ta.value = "";
+  sendMessage(text);
+}
+
+$("#btn-overview").onclick = async () => {
+  if (!state.currentPaperId) return;
+  if (!confirm("새로 개요를 생성하면 기존 대화가 초기화됩니다. 계속할까요?")) return;
+  $("#messages").innerHTML = "";
+  await sendMessage("이 논문을 전반적으로 정리해줘.", { isOverview: true });
+};
+
+$("#btn-checkpoint").onclick = async () => {
+  if (!state.currentPaperId) return;
+  const label = await prompt2("체크포인트 이름", `Checkpoint #${(state.currentPaper.chat.checkpoints || []).length + 1}`);
+  if (!label) return;
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/checkpoint`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+    });
+    state.currentPaper.chat.checkpoints.push(data.checkpoint);
+    toast("체크포인트 저장됨");
+  } catch (e) { toast(e.message, true); }
+};
+
+async function showDebugModal() {
+  if (!state.currentPaperId) { toast("논문을 먼저 선택하세요.", true); return; }
+  $("#debug-modal").style.display = "flex";
+  $("#debug-summary").innerHTML = `<div style="grid-column:1/-1; color:var(--text-mute);">로딩 중…</div>`;
+  $("#debug-prompt").textContent = "";
+  try {
+    const d = await api(`/api/papers/${state.currentPaperId}/debug`);
+    const loaded = (d.loaded_models || []).map((m) =>
+      `${m.name} (ctx=${m.context_length || "?"})`).join(", ") || "(로드된 모델 없음)";
+    const fits = d.fits_in_context
+      ? `<span style="color:var(--ok);">✓ 들어감</span>`
+      : `<span style="color:var(--danger);">✗ 초과! 시스템 프롬프트가 잘림</span>`;
+    $("#debug-summary").innerHTML = `
+      <div><b>설정 num_ctx</b></div><div>${d.configured_num_ctx.toLocaleString()}</div>
+      <div><b>시스템 프롬프트 토큰</b></div><div>~${d.approx_system_tokens.toLocaleString()}</div>
+      <div><b>대화 히스토리 토큰</b></div><div>~${d.approx_chat_tokens.toLocaleString()}</div>
+      <div><b>총합</b></div><div>~${d.approx_total_tokens.toLocaleString()} / ${d.configured_num_ctx.toLocaleString()} ${fits}</div>
+      <div><b>think 모드</b></div><div>${d.think_mode}</div>
+      <div><b>Ollama 주소</b></div><div>${d.ollama_base_url}</div>
+      <div style="grid-column:1/-1;"><b>현재 Ollama 로드 모델:</b> ${loaded}</div>
+    `;
+    $("#debug-prompt").textContent = d.system_prompt;
+  } catch (e) {
+    $("#debug-summary").innerHTML = `<div style="grid-column:1/-1; color:var(--danger);">${e.message}</div>`;
+  }
+}
+
+$("#btn-debug").onclick = showDebugModal;
+$("#btn-debug-refresh").onclick = showDebugModal;
+$("#btn-debug-close").onclick = () => { $("#debug-modal").style.display = "none"; };
+$("#debug-modal").addEventListener("click", (e) => {
+  if (e.target.id === "debug-modal") $("#debug-modal").style.display = "none";
+});
+
+$("#btn-rewind").onclick = async () => {
+  if (!state.currentPaperId) return;
+  if (!confirm("마지막 체크포인트로 되돌릴까요?")) return;
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/rewind`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    state.currentPaper.chat.messages = data.messages;
+    renderMessages(data.messages);
+    toast("되돌렸습니다");
+  } catch (e) { toast(e.message, true); }
+};
+
+// Tabs
+$$(".tab").forEach((tab) => {
+  tab.onclick = () => {
+    $$(".tab").forEach((t) => t.classList.toggle("active", t === tab));
+    $$(".tab-panel").forEach((p) => {
+      p.classList.toggle("active", p.id === tab.dataset.tab + "-panel");
+    });
+  };
+});
+
+// Notes
+const notesEditor = $("#notes-editor");
+notesEditor.addEventListener("input", () => {
+  state.notesDirty = true;
+  $("#notes-save-status").textContent = "수정됨…";
+  scheduleNotesSave();
+});
+
+function scheduleNotesSave() {
+  clearTimeout(state.notesSaveTimer);
+  state.notesSaveTimer = setTimeout(saveNotes, 800);
+}
+
+async function saveNotes() {
+  if (!state.currentPaperId || !state.notesDirty) return;
+  try {
+    await api(`/api/papers/${state.currentPaperId}/notes`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: notesEditor.value }),
+    });
+    state.notesDirty = false;
+    $("#notes-save-status").textContent = "저장됨";
+  } catch (e) {
+    $("#notes-save-status").textContent = "저장 실패";
+    toast(e.message, true);
+  }
+}
+
+async function generateSummary(mode) {
+  if (!state.currentPaperId) return;
+  $("#notes-save-status").textContent = "AI 요약 생성 중…";
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/notes/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: state.selectedModel, mode }),
+    });
+    notesEditor.value = data.notes_md;
+    state.notesDirty = false;
+    $("#notes-save-status").textContent = "저장됨";
+    $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "notes"));
+    $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === "notes-panel"));
+    toast("요약이 노트에 저장되었습니다.");
+  } catch (e) {
+    $("#notes-save-status").textContent = "실패";
+    toast(e.message, true);
+  }
+}
+
+$("#btn-summary-replace").onclick = () => generateSummary("replace");
+$("#btn-summary-append").onclick = () => generateSummary("append");
+
+// Topbar buttons
+$("#btn-new-folder").onclick = async () => {
+  const name = await prompt2("새 폴더 이름 (루트)", "");
+  if (!name) return;
+  try {
+    await api("/api/library/folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parent: "", name }),
+    });
+    await loadTree();
+  } catch (e) { toast(e.message, true); }
+};
+$("#btn-upload").onclick = () => triggerUpload(state.currentPaper ? state.currentPaper.folder : "Default");
+$("#btn-refresh").onclick = loadTree;
+
+(async () => {
+  await loadModels();
+  await loadTree();
+  await updateVocabCount();
+})();
+</script>
+</body>
+</html>

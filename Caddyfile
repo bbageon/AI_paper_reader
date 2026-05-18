@@ -1,0 +1,12 @@
+{
+    # .test TLD has no real DNS, so disable automatic HTTPS provisioning.
+    auto_https off
+}
+
+http://paper.test, http://localhost {
+    reverse_proxy paper-tutor:8181 {
+        # SSE streaming for /chat/stream and /overview/stream
+        flush_interval -1
+    }
+    encode zstd gzip
+}
