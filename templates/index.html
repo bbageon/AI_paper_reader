@@ -387,6 +387,8 @@
         <span id="page-indicator" class="meta" style="min-width: 64px; text-align: center;">–</span>
         <button id="btn-next-page" title="다음 페이지 (→)">▶</button>
         <span class="meta" style="width: 1px; height: 16px; background: var(--border);"></span>
+        <button id="btn-bookmark-add" title="현재 페이지를 북마크에 추가">🔖 추가</button>
+        <span class="meta" style="width: 1px; height: 16px; background: var(--border);"></span>
         <button id="btn-zoom-out" title="축소">−</button>
         <span id="zoom-label" class="meta" style="min-width: 36px; text-align: center;">120%</span>
         <button id="btn-zoom-in" title="확대">+</button>
@@ -407,6 +409,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="chat">채팅</button>
         <button class="tab" data-tab="notes">노트</button>
+        <button class="tab" data-tab="bookmarks">🔖 북마크 <span id="bookmark-count" style="opacity:.6;">0</span></button>
       </div>
 
       <div class="tab-panel active" id="chat-panel">
@@ -431,6 +434,14 @@
           <span class="save-status" id="notes-save-status"></span>
         </div>
         <textarea id="notes-editor" placeholder="논문을 선택하면 노트가 여기에 표시됩니다." disabled></textarea>
+      </div>
+
+      <div class="tab-panel" id="bookmarks-panel">
+        <div class="notes-toolbar">
+          <button id="btn-bookmark-add-2" title="현재 페이지를 북마크에 추가">🔖 현재 페이지 추가</button>
+          <span class="save-status" id="bookmark-empty-hint">PDF 툴바의 <b>🔖 추가</b> 또는 위 버튼으로 저장</span>
+        </div>
+        <div id="bookmark-list" style="flex:1; overflow:auto; padding: 4px 0;"></div>
       </div>
     </div>
   </div>
@@ -463,7 +474,7 @@
   </div>
 </div>
 
-<input type="file" id="file-input" accept=".pdf" style="display:none;" />
+<input type="file" id="file-input" accept=".pdf" multiple style="display:none;" />
 
 <div id="modal">
   <div class="box">
@@ -792,38 +803,68 @@ function triggerUpload(folder) {
 }
 
 $("#file-input").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
+  const files = Array.from(e.target.files || []);
   e.target.value = "";
-  if (!file) return;
-  await uploadFile(file, pendingUploadFolder);
+  if (!files.length) return;
+  await uploadFiles(files, pendingUploadFolder);
 });
 
-async function uploadFile(file, folder) {
-  if (!file.name.toLowerCase().endsWith(".pdf")) {
-    return toast("PDF 파일만 업로드할 수 있습니다.", true);
-  }
-  toast("업로드 및 변환 중…");
+async function uploadOne(file, folder) {
   const fd = new FormData();
   fd.append("file", file);
   fd.append("folder", folder || "Default");
-  try {
-    const data = await api("/api/library/upload", { method: "POST", body: fd });
-    await loadTree();
-    await openPaper(data.paper.id);
-    // Auto-generate overview for newly uploaded papers (empty chat).
-    // Existing papers re-opened from the tree keep their saved conversation.
-    if (state.currentPaper && (state.currentPaper.chat.messages || []).length === 0) {
-      toast("업로드 완료. 개요 생성 중… (작은 모델 사용, ~10초)");
-      await sendMessage("이 논문을 전반적으로 정리해줘.", {
-        isOverview: true,
-        fastOverview: true,  // backend routes to OVERVIEW_MODEL (gemma4:e4b)
-      });
-    } else {
-      toast("업로드 완료");
-    }
-  } catch (e) {
-    toast(e.message, true);
+  return await api("/api/library/upload", { method: "POST", body: fd });
+}
+
+// Handles 1 or more files. Auto-overview only fires when uploading a single
+// PDF — bombarding the model with N overviews on a batch upload is wasteful.
+async function uploadFiles(files, folder) {
+  const pdfs = files.filter((f) => f.name.toLowerCase().endsWith(".pdf"));
+  const skipped = files.length - pdfs.length;
+  if (skipped) toast(`PDF 아닌 ${skipped}개 파일 스킵`, true);
+  if (!pdfs.length) return;
+
+  if (pdfs.length === 1) {
+    // Single-file path keeps the auto-overview UX
+    toast("업로드 및 변환 중…");
+    try {
+      const data = await uploadOne(pdfs[0], folder);
+      await loadTree();
+      await openPaper(data.paper.id);
+      if (state.currentPaper && (state.currentPaper.chat.messages || []).length === 0) {
+        toast("업로드 완료. 개요 생성 중… (작은 모델 사용, ~10초)");
+        await sendMessage("이 논문을 전반적으로 정리해줘.", {
+          isOverview: true,
+          fastOverview: true,
+        });
+      } else {
+        toast("업로드 완료");
+      }
+    } catch (e) { toast(e.message, true); }
+    return;
   }
+
+  // Multi-file batch: sequential to avoid hammering pymupdf4llm + disk
+  let ok = 0, lastId = null;
+  for (let i = 0; i < pdfs.length; i++) {
+    const f = pdfs[i];
+    toast(`(${i + 1}/${pdfs.length}) ${f.name}`);
+    try {
+      const data = await uploadOne(f, folder);
+      lastId = data.paper.id;
+      ok++;
+    } catch (e) {
+      toast(`${f.name}: ${e.message}`, true);
+    }
+  }
+  await loadTree();
+  if (lastId) await openPaper(lastId);
+  toast(`${ok}/${pdfs.length}개 업로드 완료 — 개요는 ${`개요 생성`} 버튼으로 수동`);
+}
+
+// Back-compat for drag-and-drop (single file)
+async function uploadFile(file, folder) {
+  return uploadFiles([file], folder);
 }
 
 const viewerWrap = $("#viewer-wrap");
@@ -837,9 +878,9 @@ viewerWrap.addEventListener("dragleave", (e) => {
 viewerWrap.addEventListener("drop", async (e) => {
   e.preventDefault();
   $("#drop-overlay").classList.remove("shown");
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  await uploadFile(file, state.currentPaper ? state.currentPaper.folder : "Default");
+  const files = Array.from(e.dataTransfer.files || []);
+  if (!files.length) return;
+  await uploadFiles(files, state.currentPaper ? state.currentPaper.folder : "Default");
 });
 
 // Open paper
@@ -859,6 +900,9 @@ async function openPaper(paperId) {
     $("#notes-editor").value = data.notes_md || "";
     state.notesDirty = false;
     $("#notes-save-status").textContent = "저장됨";
+    // Bookmarks come back with the paper detail — ensure array shape and render
+    state.currentPaper.bookmarks = data.bookmarks || [];
+    renderBookmarks();
     await renderPdf(paperId);
 
     await loadTree();
@@ -880,6 +924,8 @@ function clearViewer() {
   $("#notes-editor").disabled = true;
   $("#notes-editor").value = "";
   $("#messages").innerHTML = "";
+  $("#bookmark-list").innerHTML = "";
+  $("#bookmark-count").textContent = "0";
 }
 
 // PDF
@@ -1120,6 +1166,70 @@ function updatePageIndicator() {
 
 $("#btn-prev-page").onclick = () => scrollToPage(getCurrentPageNum() - 1);
 $("#btn-next-page").onclick = () => scrollToPage(getCurrentPageNum() + 1);
+
+// ── Bookmarks ──
+async function addBookmarkCurrentPage() {
+  if (!state.currentPaperId) { toast("논문을 먼저 선택하세요.", true); return; }
+  const page = getCurrentPageNum();
+  if (!page) { toast("페이지를 인식할 수 없습니다.", true); return; }
+  const label = await prompt2("북마크 이름", `Page ${page}`);
+  if (label === null) return;  // user cancelled
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/bookmarks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page, label: label || `Page ${page}` }),
+    });
+    state.currentPaper.bookmarks = state.currentPaper.bookmarks || [];
+    state.currentPaper.bookmarks = [...state.currentPaper.bookmarks, data.bookmark]
+      .sort((a, b) => a.page - b.page || a.created_at - b.created_at);
+    renderBookmarks();
+    toast(`북마크 저장됨 (Page ${page})`);
+  } catch (e) { toast(e.message, true); }
+}
+
+$("#btn-bookmark-add").onclick = addBookmarkCurrentPage;
+$("#btn-bookmark-add-2").onclick = addBookmarkCurrentPage;
+
+function renderBookmarks() {
+  const listEl = $("#bookmark-list");
+  const hintEl = $("#bookmark-empty-hint");
+  const bms = (state.currentPaper && state.currentPaper.bookmarks) || [];
+  $("#bookmark-count").textContent = bms.length;
+  if (!bms.length) {
+    listEl.innerHTML = "";
+    hintEl.style.display = "";
+    return;
+  }
+  hintEl.style.display = "none";
+  listEl.innerHTML = "";
+  bms.forEach((bm) => {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; align-items:center; gap:8px; padding:8px 10px; margin:4px 8px; border-radius:6px; background:var(--bg-3); border:1px solid var(--border); cursor:pointer;";
+    const pageTag = document.createElement("span");
+    pageTag.style.cssText = "font-size:11px; color:var(--accent); font-weight:600; min-width:40px;";
+    pageTag.textContent = `p.${bm.page}`;
+    const label = document.createElement("span");
+    label.style.cssText = "flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+    label.textContent = bm.label;
+    label.title = bm.label;
+    const del = document.createElement("button");
+    del.textContent = "✕";
+    del.style.cssText = "background:transparent; border:0; color:var(--text-mute); padding:2px 6px; border-radius:4px;";
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`북마크 '${bm.label}'을(를) 삭제할까요?`)) return;
+      try {
+        await api(`/api/papers/${state.currentPaperId}/bookmarks/${bm.id}`, { method: "DELETE" });
+        state.currentPaper.bookmarks = state.currentPaper.bookmarks.filter((x) => x.id !== bm.id);
+        renderBookmarks();
+      } catch (e) { toast(e.message, true); }
+    };
+    row.onclick = () => scrollToPage(bm.page);
+    row.append(pageTag, label, del);
+    listEl.appendChild(row);
+  });
+}
 
 $("#viewer-wrap").addEventListener("scroll", () => {
   clearTimeout(state._pageIndTimer);

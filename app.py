@@ -195,6 +195,22 @@ def save_chat(paper_dir: Path, chat: dict) -> None:
     )
 
 
+def load_bookmarks(paper_dir: Path) -> dict:
+    path = paper_dir / "bookmarks.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"bookmarks": []}
+
+
+def save_bookmarks(paper_dir: Path, data: dict) -> None:
+    (paper_dir / "bookmarks.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def load_vocabulary() -> dict:
     if VOCAB_FILE.exists():
         try:
@@ -447,6 +463,7 @@ def api_paper(paper_id):
         "content_md": (paper_dir / "content.md").read_text(encoding="utf-8"),
         "notes_md": (paper_dir / "notes.md").read_text(encoding="utf-8"),
         "chat": load_chat(paper_dir),
+        "bookmarks": load_bookmarks(paper_dir).get("bookmarks", []),
         "folder": str(paper_dir.parent.relative_to(LIBRARY_DIR)),
     })
 
@@ -588,6 +605,62 @@ def api_vocab_delete(idx):
     removed = vocab["words"].pop(idx)
     save_vocabulary(vocab)
     return jsonify({"success": True, "removed": removed["word"]})
+
+
+# ── Routes: bookmarks (per-paper) ──
+@app.route("/api/papers/<paper_id>/bookmarks")
+def api_bookmarks_list(paper_id):
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    return jsonify(load_bookmarks(paper_dir))
+
+
+@app.route("/api/papers/<paper_id>/bookmarks", methods=["POST"])
+def api_bookmarks_add(paper_id):
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    data = request.json or {}
+    try:
+        page = int(data.get("page", 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid page number"}), 400
+    if page < 1:
+        return jsonify({"error": "Page must be >= 1"}), 400
+    label = (data.get("label") or f"Page {page}").strip()
+    snippet = (data.get("snippet") or "").strip()[:400]
+    bms = load_bookmarks(paper_dir)
+    new = {
+        "id": hashlib.sha1(f"{page}-{label}-{time.time()}".encode()).hexdigest()[:10],
+        "page": page,
+        "label": label,
+        "snippet": snippet,
+        "created_at": time.time(),
+    }
+    bms["bookmarks"].append(new)
+    # Sort by page then by creation time so list reads naturally
+    bms["bookmarks"].sort(key=lambda b: (b["page"], b["created_at"]))
+    save_bookmarks(paper_dir, bms)
+    return jsonify({
+        "success": True,
+        "bookmark": new,
+        "count": len(bms["bookmarks"]),
+    })
+
+
+@app.route("/api/papers/<paper_id>/bookmarks/<bm_id>", methods=["DELETE"])
+def api_bookmarks_delete(paper_id, bm_id):
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    bms = load_bookmarks(paper_dir)
+    before = len(bms["bookmarks"])
+    bms["bookmarks"] = [b for b in bms["bookmarks"] if b.get("id") != bm_id]
+    if len(bms["bookmarks"]) == before:
+        return jsonify({"error": "Bookmark not found"}), 404
+    save_bookmarks(paper_dir, bms)
+    return jsonify({"success": True, "count": len(bms["bookmarks"])})
 
 
 @app.route("/api/papers/<paper_id>/notes", methods=["PUT"])
