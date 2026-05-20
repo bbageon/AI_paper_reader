@@ -618,29 +618,33 @@ def api_bookmarks_list(paper_id):
 
 @app.route("/api/papers/<paper_id>/bookmarks", methods=["POST"])
 def api_bookmarks_add(paper_id):
+    """Bookmark a scraped snippet of text from the PDF. `text` is what the user
+    selected; `page` is the page they were on (used for navigation). `memo` is
+    an optional user note that can be edited later via PATCH."""
     paper_dir = find_paper_dir(paper_id)
     if not paper_dir:
         return jsonify({"error": "Paper not found"}), 404
     data = request.json or {}
+    text = (data.get("text") or "").strip()
+    memo = (data.get("memo") or "").strip()
     try:
         page = int(data.get("page", 1))
     except (TypeError, ValueError):
         return jsonify({"error": "Invalid page number"}), 400
     if page < 1:
-        return jsonify({"error": "Page must be >= 1"}), 400
-    label = (data.get("label") or f"Page {page}").strip()
-    snippet = (data.get("snippet") or "").strip()[:400]
+        page = 1
+    if not text:
+        return jsonify({"error": "Bookmark text required"}), 400
     bms = load_bookmarks(paper_dir)
     new = {
-        "id": hashlib.sha1(f"{page}-{label}-{time.time()}".encode()).hexdigest()[:10],
+        "id": hashlib.sha1(f"{text[:40]}-{time.time()}".encode()).hexdigest()[:10],
         "page": page,
-        "label": label,
-        "snippet": snippet,
+        "text": text[:2000],
+        "memo": memo,
         "created_at": time.time(),
     }
     bms["bookmarks"].append(new)
-    # Sort by page then by creation time so list reads naturally
-    bms["bookmarks"].sort(key=lambda b: (b["page"], b["created_at"]))
+    bms["bookmarks"].sort(key=lambda b: (b.get("page", 0), b.get("created_at", 0)))
     save_bookmarks(paper_dir, bms)
     return jsonify({
         "success": True,
@@ -661,6 +665,23 @@ def api_bookmarks_delete(paper_id, bm_id):
         return jsonify({"error": "Bookmark not found"}), 404
     save_bookmarks(paper_dir, bms)
     return jsonify({"success": True, "count": len(bms["bookmarks"])})
+
+
+@app.route("/api/papers/<paper_id>/bookmarks/<bm_id>", methods=["PATCH"])
+def api_bookmarks_update(paper_id, bm_id):
+    """Edit a bookmark — memo is the main editable field; text/page kept stable."""
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    data = request.json or {}
+    bms = load_bookmarks(paper_dir)
+    target = next((b for b in bms["bookmarks"] if b.get("id") == bm_id), None)
+    if not target:
+        return jsonify({"error": "Bookmark not found"}), 404
+    if "memo" in data:
+        target["memo"] = (data["memo"] or "").strip()
+    save_bookmarks(paper_dir, bms)
+    return jsonify({"success": True, "bookmark": target})
 
 
 @app.route("/api/papers/<paper_id>/notes", methods=["PUT"])

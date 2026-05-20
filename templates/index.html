@@ -387,8 +387,6 @@
         <span id="page-indicator" class="meta" style="min-width: 64px; text-align: center;">–</span>
         <button id="btn-next-page" title="다음 페이지 (→)">▶</button>
         <span class="meta" style="width: 1px; height: 16px; background: var(--border);"></span>
-        <button id="btn-bookmark-add" title="현재 페이지를 북마크에 추가">🔖 추가</button>
-        <span class="meta" style="width: 1px; height: 16px; background: var(--border);"></span>
         <button id="btn-zoom-out" title="축소">−</button>
         <span id="zoom-label" class="meta" style="min-width: 36px; text-align: center;">120%</span>
         <button id="btn-zoom-in" title="확대">+</button>
@@ -438,8 +436,9 @@
 
       <div class="tab-panel" id="bookmarks-panel">
         <div class="notes-toolbar">
-          <button id="btn-bookmark-add-2" title="현재 페이지를 북마크에 추가">🔖 현재 페이지 추가</button>
-          <span class="save-status" id="bookmark-empty-hint">PDF 툴바의 <b>🔖 추가</b> 또는 위 버튼으로 저장</span>
+          <span class="save-status" id="bookmark-empty-hint">
+            PDF에서 텍스트 드래그 → <b>🔖</b> 버튼으로 저장. 클릭하면 해당 페이지로 이동.
+          </span>
         </div>
         <div id="bookmark-list" style="flex:1; overflow:auto; padding: 4px 0;"></div>
       </div>
@@ -454,6 +453,7 @@
     <button data-mode="word">단어 뜻</button>
     <button data-mode="sentence">문장 번역</button>
     <button data-mode="ask">채팅에 질문</button>
+    <button data-mode="bookmark" title="이 텍스트를 북마크에 저장" style="flex:0 0 40px;">🔖</button>
   </div>
 </div>
 
@@ -1168,28 +1168,46 @@ $("#btn-prev-page").onclick = () => scrollToPage(getCurrentPageNum() - 1);
 $("#btn-next-page").onclick = () => scrollToPage(getCurrentPageNum() + 1);
 
 // ── Bookmarks ──
-async function addBookmarkCurrentPage() {
+function formatBookmarkDate(ts) {
+  const dt = new Date(ts * 1000);
+  const m = dt.getMonth() + 1;
+  const d = dt.getDate();
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  return `${m}월 ${d}일 ${hh}:${mm}`;
+}
+
+async function addBookmarkFromSelection(text) {
   if (!state.currentPaperId) { toast("논문을 먼저 선택하세요.", true); return; }
-  const page = getCurrentPageNum();
-  if (!page) { toast("페이지를 인식할 수 없습니다.", true); return; }
-  const label = await prompt2("북마크 이름", `Page ${page}`);
-  if (label === null) return;  // user cancelled
+  if (!text) { toast("선택된 텍스트가 없습니다.", true); return; }
+  const page = getCurrentPageNum() || 1;
   try {
     const data = await api(`/api/papers/${state.currentPaperId}/bookmarks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ page, label: label || `Page ${page}` }),
+      body: JSON.stringify({ text, page, memo: "" }),
     });
     state.currentPaper.bookmarks = state.currentPaper.bookmarks || [];
     state.currentPaper.bookmarks = [...state.currentPaper.bookmarks, data.bookmark]
       .sort((a, b) => a.page - b.page || a.created_at - b.created_at);
     renderBookmarks();
-    toast(`북마크 저장됨 (Page ${page})`);
+    hideMini();
+    toast(`북마크 저장됨 (p.${page})`);
   } catch (e) { toast(e.message, true); }
 }
 
-$("#btn-bookmark-add").onclick = addBookmarkCurrentPage;
-$("#btn-bookmark-add-2").onclick = addBookmarkCurrentPage;
+async function updateBookmarkMemo(bmId, memo) {
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/bookmarks/${bmId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memo }),
+    });
+    // Reflect in local cache
+    const idx = state.currentPaper.bookmarks.findIndex((b) => b.id === bmId);
+    if (idx >= 0) state.currentPaper.bookmarks[idx] = data.bookmark;
+  } catch (e) { toast(e.message, true); }
+}
 
 function renderBookmarks() {
   const listEl = $("#bookmark-list");
@@ -1204,30 +1222,116 @@ function renderBookmarks() {
   hintEl.style.display = "none";
   listEl.innerHTML = "";
   bms.forEach((bm) => {
-    const row = document.createElement("div");
-    row.style.cssText = "display:flex; align-items:center; gap:8px; padding:8px 10px; margin:4px 8px; border-radius:6px; background:var(--bg-3); border:1px solid var(--border); cursor:pointer;";
+    const card = document.createElement("div");
+    card.style.cssText = "margin:6px 8px; border:1px solid var(--border); border-radius:8px; background:var(--bg-3); overflow:hidden;";
+
+    // Header row: page tag · text snippet (truncated) · date · expand · delete
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer;";
+
     const pageTag = document.createElement("span");
-    pageTag.style.cssText = "font-size:11px; color:var(--accent); font-weight:600; min-width:40px;";
+    pageTag.style.cssText = "font-size:11px; color:var(--accent); font-weight:600; min-width:38px;";
     pageTag.textContent = `p.${bm.page}`;
-    const label = document.createElement("span");
-    label.style.cssText = "flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
-    label.textContent = bm.label;
-    label.title = bm.label;
+
+    const snippet = document.createElement("span");
+    snippet.style.cssText = "flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px;";
+    const text = bm.text || bm.label || "";
+    snippet.textContent = text;
+    snippet.title = text;
+
+    const dateLabel = document.createElement("span");
+    dateLabel.style.cssText = "font-size:10.5px; color:var(--text-mute); white-space:nowrap;";
+    dateLabel.textContent = formatBookmarkDate(bm.created_at);
+
+    const expandBtn = document.createElement("button");
+    expandBtn.style.cssText = "background:transparent; border:0; color:var(--text-mute); padding:2px 6px; border-radius:4px; font-size:11px;";
+    expandBtn.textContent = "▾";
+    expandBtn.title = "펼치기 / 메모";
+
     const del = document.createElement("button");
     del.textContent = "✕";
-    del.style.cssText = "background:transparent; border:0; color:var(--text-mute); padding:2px 6px; border-radius:4px;";
+    del.style.cssText = "background:transparent; border:0; color:var(--text-mute); padding:2px 6px; border-radius:4px; font-size:14px;";
+    del.title = "삭제";
     del.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(`북마크 '${bm.label}'을(를) 삭제할까요?`)) return;
+      if (!confirm("이 북마크를 지울까요?")) return;
       try {
         await api(`/api/papers/${state.currentPaperId}/bookmarks/${bm.id}`, { method: "DELETE" });
         state.currentPaper.bookmarks = state.currentPaper.bookmarks.filter((x) => x.id !== bm.id);
         renderBookmarks();
       } catch (e) { toast(e.message, true); }
     };
-    row.onclick = () => scrollToPage(bm.page);
-    row.append(pageTag, label, del);
-    listEl.appendChild(row);
+
+    header.append(pageTag, snippet, dateLabel, expandBtn, del);
+
+    // Body (collapsed by default): full text + memo editor
+    const body = document.createElement("div");
+    body.style.cssText = "display:none; padding:8px 12px 12px; border-top:1px solid var(--border); background:var(--bg-2);";
+
+    const fullText = document.createElement("div");
+    fullText.style.cssText = "font-size:12.5px; color:var(--text); line-height:1.55; padding:6px 8px; background:var(--bg-3); border-radius:6px; border-left:2px solid var(--accent); white-space:pre-wrap; word-wrap:break-word; max-height:200px; overflow:auto; margin-bottom:8px;";
+    fullText.textContent = text;
+
+    const memoLabel = document.createElement("div");
+    memoLabel.style.cssText = "font-size:11px; color:var(--text-mute); text-transform:uppercase; letter-spacing:.6px; margin-bottom:4px;";
+    memoLabel.textContent = "메모";
+
+    const memoArea = document.createElement("textarea");
+    memoArea.style.cssText = "width:100%; min-height:60px; max-height:180px; resize:vertical; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font:13px ui-monospace, SFMono-Regular, Consolas, monospace;";
+    memoArea.placeholder = "이 북마크에 대한 메모…";
+    memoArea.value = bm.memo || "";
+    let memoSaveTimer = null;
+    let memoDirty = false;
+    const memoStatus = document.createElement("span");
+    memoStatus.style.cssText = "margin-left:8px; font-size:11px; color:var(--text-mute);";
+
+    memoArea.addEventListener("input", () => {
+      memoDirty = true;
+      memoStatus.textContent = "수정됨…";
+      clearTimeout(memoSaveTimer);
+      memoSaveTimer = setTimeout(async () => {
+        if (!memoDirty) return;
+        memoStatus.textContent = "저장 중…";
+        await updateBookmarkMemo(bm.id, memoArea.value);
+        bm.memo = memoArea.value;
+        memoDirty = false;
+        memoStatus.textContent = "저장됨";
+      }, 600);
+    });
+    memoArea.addEventListener("blur", () => {
+      if (memoDirty) {
+        clearTimeout(memoSaveTimer);
+        memoStatus.textContent = "저장 중…";
+        updateBookmarkMemo(bm.id, memoArea.value).then(() => {
+          bm.memo = memoArea.value;
+          memoDirty = false;
+          memoStatus.textContent = "저장됨";
+        });
+      }
+    });
+
+    const memoRow = document.createElement("div");
+    memoRow.style.cssText = "display:flex; align-items:center;";
+    memoRow.appendChild(memoLabel);
+    memoRow.appendChild(memoStatus);
+
+    body.append(fullText, memoRow, memoArea);
+
+    // Header click navigates to page (not the buttons).
+    header.onclick = (e) => {
+      if (e.target === expandBtn || e.target === del) return;
+      scrollToPage(bm.page);
+    };
+    // Expand button toggles body
+    expandBtn.onclick = (e) => {
+      e.stopPropagation();
+      const open = body.style.display === "none";
+      body.style.display = open ? "block" : "none";
+      expandBtn.textContent = open ? "▴" : "▾";
+    };
+
+    card.append(header, body);
+    listEl.appendChild(card);
   });
 }
 
@@ -1411,9 +1515,16 @@ async function handleActionClick(mode, selectionText, fromMini) {
   await explainSelection(mode);
 }
 
-// Wire MINI action buttons (use latest dragged selection)
+// Wire MINI action buttons (use latest dragged selection).
+// `bookmark` mode is MINI-only — saves text + page + empty memo.
 actionPopup.querySelectorAll(".actions button").forEach((btn) => {
-  btn.onclick = () => handleActionClick(btn.dataset.mode, state.lastSelectionText, true);
+  btn.onclick = () => {
+    if (btn.dataset.mode === "bookmark") {
+      addBookmarkFromSelection(state.lastSelectionText);
+      return;
+    }
+    handleActionClick(btn.dataset.mode, state.lastSelectionText, true);
+  };
 });
 
 // Wire DETAIL action buttons (use the selection DETAIL is currently displaying)
