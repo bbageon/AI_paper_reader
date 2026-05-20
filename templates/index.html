@@ -1245,8 +1245,8 @@ function renderBookmarks() {
 
     const expandBtn = document.createElement("button");
     expandBtn.style.cssText = "background:transparent; border:0; color:var(--text-mute); padding:2px 6px; border-radius:4px; font-size:11px;";
-    expandBtn.textContent = "▾";
-    expandBtn.title = "펼치기 / 메모";
+    expandBtn.textContent = "▴";
+    expandBtn.title = "접기 / 펼치기";
 
     const del = document.createElement("button");
     del.textContent = "✕";
@@ -1264,9 +1264,10 @@ function renderBookmarks() {
 
     header.append(pageTag, snippet, dateLabel, expandBtn, del);
 
-    // Body (collapsed by default): full text + memo editor
+    // Body (expanded by default): full text + memo editor.
+    // User can collapse via the ▴ caret in the header.
     const body = document.createElement("div");
-    body.style.cssText = "display:none; padding:8px 12px 12px; border-top:1px solid var(--border); background:var(--bg-2);";
+    body.style.cssText = "display:block; padding:8px 12px 12px; border-top:1px solid var(--border); background:var(--bg-2);";
 
     const fullText = document.createElement("div");
     fullText.style.cssText = "font-size:12.5px; color:var(--text); line-height:1.55; padding:6px 8px; background:var(--bg-3); border-radius:6px; border-left:2px solid var(--accent); white-space:pre-wrap; word-wrap:break-word; max-height:200px; overflow:auto; margin-bottom:8px;";
