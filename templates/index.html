@@ -20,6 +20,58 @@
     --danger: #ff5e7a;
     --ok: #4fd1a8;
   }
+  html[data-theme="light"] {
+    --bg: #f6f7fb;
+    --bg-2: #ffffff;
+    --bg-3: #eef0f6;
+    --bg-4: #e2e6f0;
+    --border: #d4d8e3;
+    --text: #1f2937;
+    --text-dim: #4b5563;
+    --text-mute: #6b7280;
+    --accent: #4f63d2;
+    --accent-2: #7c5ce6;
+    --danger: #e53e5e;
+    --ok: #2ea889;
+  }
+  kbd {
+    background: var(--bg-3); border:1px solid var(--border);
+    border-radius:4px; padding:1px 6px; font:12px ui-monospace, SFMono-Regular, monospace;
+    color: var(--text); box-shadow: 0 1px 0 var(--border);
+  }
+  /* progress bar inside viewer toolbar */
+  #progress-bar-wrap {
+    flex:0 0 80px; height:4px; background:var(--bg-3); border-radius:2px;
+    overflow:hidden; margin: 0 6px;
+  }
+  #progress-bar-fill {
+    height:100%; background: var(--accent); width:0; transition: width .25s;
+  }
+  /* tag badges */
+  .tag-badge {
+    display:inline-block; font-size:10.5px; padding:1px 7px; border-radius:10px;
+    background: rgba(94,123,255,0.15); color: var(--accent);
+    border:1px solid rgba(94,123,255,0.25); margin-right:4px;
+  }
+  /* in-PDF find bar */
+  #pdf-find-bar {
+    position:absolute; top:8px; right:8px; z-index:60;
+    background: var(--bg-2); border:1px solid var(--border); border-radius:8px;
+    padding:6px; display:none; gap:6px; align-items:center;
+    box-shadow: 0 6px 18px rgba(0,0,0,.4);
+  }
+  #pdf-find-bar.shown { display:flex; }
+  #pdf-find-input {
+    background: var(--bg-3); border:1px solid var(--border); color:var(--text);
+    padding:4px 8px; border-radius:5px; font-size:12px; width:200px;
+  }
+  #pdf-find-bar button {
+    background: var(--bg-3); border:1px solid var(--border); color:var(--text);
+    border-radius:5px; padding:3px 9px; font-size:12px;
+  }
+  #pdf-find-status { font-size:11px; color: var(--text-mute); min-width: 50px; }
+  .pdf-find-mark { background: rgba(255, 220, 80, 0.55); border-radius:2px; }
+  .pdf-find-mark.current { background: rgba(255, 160, 30, 0.85); }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -363,6 +415,10 @@
     <div class="spacer"></div>
     <span class="pill" id="ollama-status">Ollama: …</span>
     <button class="pill" id="btn-vocab" title="저장한 영단어 보기" style="cursor:pointer;">📚 단어장 <span id="vocab-count-pill" style="opacity:.6;">0</span></button>
+    <button class="pill" id="btn-lib-search" title="라이브러리 전체 검색 (Cmd/Ctrl+K)" style="cursor:pointer;">🔍 검색</button>
+    <button class="pill" id="btn-arxiv-import" title="arXiv URL로 임포트" style="cursor:pointer;">⬇ arXiv</button>
+    <button class="pill" id="btn-theme-toggle" title="라이트/다크 테마 토글" style="cursor:pointer;">🌓</button>
+    <button class="pill" id="btn-help" title="단축키 안내 (?)" style="cursor:pointer;">?</button>
     <select id="model-select" title="모델 선택"></select>
   </div>
 
@@ -381,20 +437,35 @@
 
     <div class="pane" id="center">
       <div class="viewer-toolbar">
-        <span class="title" id="viewer-title">논문을 선택하세요</span>
+        <span class="title" id="viewer-title" title="클릭해서 태그 편집">논문을 선택하세요</span>
+        <span id="viewer-tags"></span>
         <span class="meta" id="viewer-meta"></span>
         <button id="btn-prev-page" title="이전 페이지 (←)">◀</button>
         <span id="page-indicator" class="meta" style="min-width: 64px; text-align: center;">–</span>
         <button id="btn-next-page" title="다음 페이지 (→)">▶</button>
+        <div id="progress-bar-wrap" title="읽기 진도 (스크롤로 자동 갱신)"><div id="progress-bar-fill"></div></div>
+        <button id="btn-pdf-find" title="PDF 안 검색 (Cmd/Ctrl+F)">🔎</button>
         <span class="meta" style="width: 1px; height: 16px; background: var(--border);"></span>
         <button id="btn-zoom-out" title="축소">−</button>
         <span id="zoom-label" class="meta" style="min-width: 36px; text-align: center;">120%</span>
         <button id="btn-zoom-in" title="확대">+</button>
+        <span class="meta" style="width: 1px; height: 16px; background: var(--border);"></span>
+        <button id="btn-paper-zip" title="📦 ZIP 내보내기 (PDF+노트+대화+북마크+하이라이트)">📦</button>
+        <button id="btn-paper-quiz" title="🧠 퀴즈 생성">🧠</button>
+        <button id="btn-paper-refs" title="📑 참고문헌 추출">📑</button>
+        <button id="btn-paper-enrich" title="🔄 Semantic Scholar 메타 보강 (네트워크)">🔄</button>
       </div>
       <div id="viewer-wrap" tabindex="0">
         <div id="viewer-empty">
           <div style="font-size: 36px;">📄</div>
           <div class="hint">왼쪽에서 논문을 선택하거나 PDF를 드래그해서 업로드하세요.</div>
+        </div>
+        <div id="pdf-find-bar">
+          <input id="pdf-find-input" placeholder="PDF 안에서 검색…">
+          <button id="pdf-find-prev" title="이전">▲</button>
+          <button id="pdf-find-next" title="다음">▼</button>
+          <span id="pdf-find-status">—</span>
+          <button id="pdf-find-close" title="닫기 (Esc)">✕</button>
         </div>
         <div id="pages"></div>
         <div id="drop-overlay">PDF를 놓으면 업로드됩니다</div>
@@ -408,6 +479,7 @@
         <button class="tab active" data-tab="chat">채팅</button>
         <button class="tab" data-tab="notes">노트</button>
         <button class="tab" data-tab="bookmarks">🔖 북마크 <span id="bookmark-count" style="opacity:.6;">0</span></button>
+        <button class="tab" data-tab="refs">📑 참고문헌 <span id="refs-count" style="opacity:.6;">–</span></button>
       </div>
 
       <div class="tab-panel active" id="chat-panel">
@@ -441,6 +513,14 @@
           </span>
         </div>
         <div id="bookmark-list" style="flex:1; overflow:auto; padding: 4px 0;"></div>
+      </div>
+
+      <div class="tab-panel" id="refs-panel">
+        <div class="notes-toolbar">
+          <button id="btn-refs-extract" title="content.md 에서 참고문헌 추출">추출</button>
+          <span class="save-status" id="refs-empty-hint">📑 추출 버튼을 누르면 References 섹션을 파싱합니다.</span>
+        </div>
+        <div id="refs-list" style="flex:1; overflow:auto; padding: 4px 0;"></div>
       </div>
     </div>
   </div>
@@ -503,15 +583,95 @@
 <div id="vocab-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:200; align-items:center; justify-content:center;">
   <div style="background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:18px; width:min(760px, 92vw); max-height:88vh; display:flex; flex-direction:column;">
     <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-      <h3 style="margin:0; font-size:14px; flex:1;">📚 단어장 <span id="vocab-count" style="color:var(--text-mute); font-weight:400;">(0)</span></h3>
-      <input id="vocab-search" placeholder="검색…" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); padding:5px 10px; border-radius:5px; font-size:12.5px; width:180px;">
+      <h3 style="margin:0; font-size:14px;">📚 단어장 <span id="vocab-count" style="color:var(--text-mute); font-weight:400;">(0)</span></h3>
+      <div style="display:flex; gap:0; border-radius:5px; overflow:hidden; border:1px solid var(--border); margin-left:6px;">
+        <button class="vocab-mode" data-mode="list" style="background:var(--bg-3); border:0; color:var(--text); padding:5px 10px; font-size:12px;">목록</button>
+        <button class="vocab-mode" data-mode="flash" style="background:transparent; border:0; color:var(--text-dim); padding:5px 10px; font-size:12px;">플래시카드</button>
+      </div>
+      <div style="flex:1;"></div>
+      <input id="vocab-search" placeholder="검색…" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); padding:5px 10px; border-radius:5px; font-size:12.5px; width:160px;">
+      <button id="btn-vocab-csv" title="CSV 내보내기 (Anki 호환)" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:5px 10px; font-size:12px;">CSV</button>
       <button id="btn-vocab-close" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:5px 12px; font-size:12px;">닫기</button>
     </div>
+
     <div id="vocab-list" style="flex:1; overflow:auto; margin:0 -4px;"></div>
+
+    <div id="vocab-flash-view" style="display:none; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:30px;">
+      <div id="flash-card" style="width:100%; max-width:480px; min-height:200px; background:var(--bg-3); border:1px solid var(--border); border-radius:12px; padding:24px; display:flex; flex-direction:column; gap:12px; cursor:pointer;">
+        <div style="font-size:11px; color:var(--text-mute); text-transform:uppercase; letter-spacing:.8px;" id="flash-step">1 / 0</div>
+        <div id="flash-word" style="font-size:28px; font-weight:600;">—</div>
+        <div id="flash-back" style="display:none; color:var(--text); line-height:1.55; white-space:pre-wrap; font-size:13px;"></div>
+        <div style="margin-top:auto; color:var(--text-mute); font-size:11px;">카드 클릭 → 뜻 보기</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button id="flash-prev" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); padding:6px 14px; border-radius:6px;">◀ 이전</button>
+        <button id="flash-flip" style="background:var(--accent); border:0; color:white; padding:6px 18px; border-radius:6px; font-weight:500;">뒤집기</button>
+        <button id="flash-next" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); padding:6px 14px; border-radius:6px;">다음 ▶</button>
+      </div>
+    </div>
+
     <div id="vocab-empty" style="display:none; padding:40px; text-align:center; color:var(--text-mute); font-size:13px;">
       아직 저장한 단어가 없어요.<br>
       PDF에서 모르는 단어를 드래그 → 단어 뜻 → 📚 단어장 추가로 모아보세요.
     </div>
+  </div>
+</div>
+
+<!-- 단축키 안내 모달 -->
+<div id="help-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:200; align-items:center; justify-content:center;">
+  <div style="background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:18px; width:min(600px, 92vw); max-height:88vh; overflow:auto;">
+    <div style="display:flex; align-items:center; margin-bottom:12px;">
+      <h3 style="margin:0; font-size:14px; flex:1;">⌨️ 단축키</h3>
+      <button id="btn-help-close" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:4px 12px; font-size:12px;">닫기</button>
+    </div>
+    <div style="font-size:12.5px; line-height:1.8; color:var(--text);">
+      <div style="font-weight:600; margin-top:6px; color:var(--text-dim); text-transform:uppercase; font-size:11px; letter-spacing:.8px;">PDF 뷰어</div>
+      <div><kbd>↑</kbd>/<kbd>↓</kbd> 스크롤 · <kbd>Space</kbd>/<kbd>PageDown</kbd> 한 화면 · <kbd>←</kbd>/<kbd>→</kbd> 이전/다음 페이지 · <kbd>Home</kbd>/<kbd>End</kbd> 처음/끝</div>
+      <div><kbd>Cmd/Ctrl</kbd>+휠/드래그 줌</div>
+      <div><kbd>Cmd/Ctrl</kbd>+<kbd>F</kbd> PDF 안 검색</div>
+      <div style="font-weight:600; margin-top:10px; color:var(--text-dim); text-transform:uppercase; font-size:11px; letter-spacing:.8px;">팝업</div>
+      <div>텍스트 드래그 → MINI 팝업 · <kbd>Esc</kbd> 닫기 · DETAIL은 드래그로 이동</div>
+      <div>MINI 의 <kbd>🔖</kbd> → 북마크 저장</div>
+      <div style="font-weight:600; margin-top:10px; color:var(--text-dim); text-transform:uppercase; font-size:11px; letter-spacing:.8px;">전역</div>
+      <div><kbd>Cmd/Ctrl</kbd>+<kbd>K</kbd> 라이브러리 검색 · <kbd>?</kbd> 이 도움말</div>
+      <div>패널 경계 드래그로 너비 조절, 더블클릭으로 리셋</div>
+    </div>
+  </div>
+</div>
+
+<!-- 라이브러리 전체 검색 -->
+<div id="libsearch-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:200; align-items:flex-start; justify-content:center; padding-top:80px;">
+  <div style="background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:14px; width:min(680px, 92vw); max-height:70vh; display:flex; flex-direction:column;">
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <input id="libsearch-input" placeholder="라이브러리 전체 검색 — 본문/노트/북마크/단어장" style="flex:1; background:var(--bg-3); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:6px; font-size:14px;">
+      <button id="libsearch-close" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:5px 12px;">닫기</button>
+    </div>
+    <div id="libsearch-results" style="flex:1; overflow:auto;"></div>
+  </div>
+</div>
+
+<!-- arXiv 임포트 -->
+<div id="arxiv-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:200; align-items:center; justify-content:center;">
+  <div style="background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:18px; width:min(520px, 92vw);">
+    <h3 style="margin:0 0 8px; font-size:14px;">⬇ arXiv에서 가져오기</h3>
+    <p style="font-size:12px; color:var(--text-mute); margin:0 0 10px;">예: https://arxiv.org/abs/2401.00001 또는 PDF URL</p>
+    <input id="arxiv-input" placeholder="arXiv URL 또는 ID" style="width:100%; background:var(--bg-3); border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:6px; font-size:13px;">
+    <div style="display:flex; gap:6px; justify-content:flex-end; margin-top:12px;">
+      <button id="arxiv-cancel" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:6px 14px;">취소</button>
+      <button id="arxiv-go" style="background:var(--accent); border:0; color:white; border-radius:5px; padding:6px 14px;">가져오기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 퀴즈 모달 -->
+<div id="quiz-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:200; align-items:center; justify-content:center;">
+  <div style="background:var(--bg-2); border:1px solid var(--border); border-radius:10px; padding:18px; width:min(620px, 92vw); max-height:88vh; display:flex; flex-direction:column;">
+    <div style="display:flex; align-items:center; margin-bottom:10px;">
+      <h3 style="margin:0; font-size:14px; flex:1;">🧠 논문 퀴즈</h3>
+      <button id="quiz-regen" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:4px 10px; font-size:12px;">새로 만들기</button>
+      <button id="quiz-close" style="background:var(--bg-3); border:1px solid var(--border); color:var(--text); border-radius:5px; padding:4px 10px; margin-left:6px; font-size:12px;">닫기</button>
+    </div>
+    <div id="quiz-body" style="flex:1; overflow:auto; padding:6px 4px;"></div>
   </div>
 </div>
 
@@ -1986,6 +2146,521 @@ $("#btn-new-folder").onclick = async () => {
 };
 $("#btn-upload").onclick = () => triggerUpload(state.currentPaper ? state.currentPaper.folder : "Default");
 $("#btn-refresh").onclick = loadTree;
+
+// ─────────────────────────────────────────────────────────
+//  추가 기능 일괄 와이어업 (테마/단축키/라이브러리 검색/arXiv/퀴즈/
+//  PDF 안 검색/태그/진도/참고문헌/플래시카드/CSV/ZIP/TTS)
+// ─────────────────────────────────────────────────────────
+
+// === 라이트/다크 테마 토글 ===
+(function initTheme() {
+  const saved = localStorage.getItem("paper-tutor:theme");
+  if (saved === "light") document.documentElement.setAttribute("data-theme", "light");
+})();
+$("#btn-theme-toggle").onclick = () => {
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  if (isLight) {
+    document.documentElement.removeAttribute("data-theme");
+    localStorage.removeItem("paper-tutor:theme");
+  } else {
+    document.documentElement.setAttribute("data-theme", "light");
+    localStorage.setItem("paper-tutor:theme", "light");
+  }
+};
+
+// === 단축키 모달 ===
+function openHelp() { $("#help-modal").style.display = "flex"; }
+$("#btn-help").onclick = openHelp;
+$("#btn-help-close").onclick = () => { $("#help-modal").style.display = "none"; };
+$("#help-modal").addEventListener("click", (e) => {
+  if (e.target.id === "help-modal") $("#help-modal").style.display = "none";
+});
+
+// === 라이브러리 전체 검색 ===
+async function runLibSearch(q) {
+  const box = $("#libsearch-results");
+  if (!q || q.length < 2) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div style="padding:12px; color:var(--text-mute);">검색 중…</div>`;
+  try {
+    const data = await api(`/api/library/search?q=${encodeURIComponent(q)}`);
+    if (!data.results.length) {
+      box.innerHTML = `<div style="padding:12px; color:var(--text-mute);">결과 없음</div>`;
+      return;
+    }
+    box.innerHTML = "";
+    data.results.forEach((r) => {
+      const card = document.createElement("div");
+      card.style.cssText = "padding:10px 12px; margin:6px 0; border:1px solid var(--border); border-radius:6px; background:var(--bg-3); cursor:pointer;";
+      card.onclick = () => {
+        $("#libsearch-modal").style.display = "none";
+        openPaper(r.paper_id);
+      };
+      const title = document.createElement("div");
+      title.style.cssText = "font-weight:600; color:var(--text); margin-bottom:4px;";
+      title.textContent = r.title;
+      const folder = document.createElement("div");
+      folder.style.cssText = "font-size:11px; color:var(--text-mute);";
+      folder.textContent = `📁 ${r.folder} · ${r.hits.length}개 일치`;
+      card.append(title, folder);
+      r.hits.slice(0, 3).forEach((h) => {
+        const snip = document.createElement("div");
+        snip.style.cssText = "font-size:12px; color:var(--text-dim); margin-top:6px; padding-left:8px; border-left:2px solid var(--accent);";
+        const where = h.where === "bookmark" ? `🔖 p.${h.page}` : (h.where === "notes" ? "📝 노트" : "📄 본문");
+        snip.innerHTML = `<span style="color:var(--accent); font-size:10.5px; margin-right:6px;">${where}</span>${escapeHtml(h.snippet)}`;
+        card.appendChild(snip);
+      });
+      box.appendChild(card);
+    });
+  } catch (e) {
+    box.innerHTML = `<div style="padding:12px; color:var(--danger);">${e.message}</div>`;
+  }
+}
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+function openLibSearch() {
+  $("#libsearch-modal").style.display = "flex";
+  $("#libsearch-input").value = "";
+  $("#libsearch-results").innerHTML = "";
+  setTimeout(() => $("#libsearch-input").focus(), 50);
+}
+$("#btn-lib-search").onclick = openLibSearch;
+$("#libsearch-close").onclick = () => { $("#libsearch-modal").style.display = "none"; };
+$("#libsearch-modal").addEventListener("click", (e) => {
+  if (e.target.id === "libsearch-modal") $("#libsearch-modal").style.display = "none";
+});
+let libSearchTimer = null;
+$("#libsearch-input").addEventListener("input", (e) => {
+  clearTimeout(libSearchTimer);
+  libSearchTimer = setTimeout(() => runLibSearch(e.target.value.trim()), 250);
+});
+
+// === arXiv 임포트 ===
+$("#btn-arxiv-import").onclick = () => {
+  $("#arxiv-modal").style.display = "flex";
+  $("#arxiv-input").value = "";
+  setTimeout(() => $("#arxiv-input").focus(), 50);
+};
+$("#arxiv-cancel").onclick = () => { $("#arxiv-modal").style.display = "none"; };
+$("#arxiv-go").onclick = async () => {
+  const url = $("#arxiv-input").value.trim();
+  if (!url) return;
+  toast("arXiv에서 다운로드 + 변환 중… (수초~수십초)");
+  try {
+    const data = await api("/api/library/import_arxiv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, folder: state.currentPaper ? state.currentPaper.folder : "Default" }),
+    });
+    $("#arxiv-modal").style.display = "none";
+    await loadTree();
+    await openPaper(data.paper.id);
+    toast(`임포트 완료: ${data.paper.title}`);
+  } catch (e) { toast(e.message, true); }
+};
+
+// === 논문 액션 버튼 (ZIP / 퀴즈 / 참고문헌 / 메타 보강) ===
+$("#btn-paper-zip").onclick = () => {
+  if (!state.currentPaperId) return toast("논문을 먼저 선택하세요.", true);
+  window.location.href = `/api/papers/${state.currentPaperId}/export.zip`;
+};
+$("#btn-paper-enrich").onclick = async () => {
+  if (!state.currentPaperId) return toast("논문을 먼저 선택하세요.", true);
+  toast("Semantic Scholar에서 메타 가져오는 중…");
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/enrich`, { method: "POST" });
+    state.currentPaper.meta = data.meta;
+    applyMetaToUI(data.meta);
+    toast(`메타 보강 완료: ${data.meta.title}`);
+  } catch (e) { toast(e.message, true); }
+};
+
+// === 퀴즈 ===
+async function runQuiz() {
+  if (!state.currentPaperId) return toast("논문을 먼저 선택하세요.", true);
+  $("#quiz-modal").style.display = "flex";
+  $("#quiz-body").innerHTML = `<div style="padding:20px; color:var(--text-mute);">퀴즈 생성 중… (논문 길이 따라 10~30초)</div>`;
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/quiz`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: state.selectedModel }),
+    });
+    renderQuiz(data.questions, data.raw);
+  } catch (e) {
+    $("#quiz-body").innerHTML = `<div style="padding:20px; color:var(--danger);">${e.message}</div>`;
+  }
+}
+function renderQuiz(questions, raw) {
+  const body = $("#quiz-body");
+  body.innerHTML = "";
+  if (!questions || !questions.length) {
+    body.innerHTML = `<div style="padding:8px; color:var(--text-mute);">JSON 파싱 실패. 원시 응답:</div><pre style="white-space:pre-wrap; font-size:12px; padding:10px; background:var(--bg-3); border-radius:6px;">${escapeHtml(raw || "")}</pre>`;
+    return;
+  }
+  questions.forEach((q, i) => {
+    const card = document.createElement("div");
+    card.style.cssText = "padding:12px; margin:8px 0; border:1px solid var(--border); border-radius:8px; background:var(--bg-3);";
+    const qEl = document.createElement("div");
+    qEl.style.cssText = "font-weight:600; color:var(--text); margin-bottom:8px;";
+    qEl.textContent = `${i + 1}. ${q.q}`;
+    const reveal = document.createElement("button");
+    reveal.textContent = "정답 보기";
+    reveal.style.cssText = "background:var(--bg-4); border:1px solid var(--border); color:var(--text); padding:4px 10px; border-radius:5px; font-size:12px;";
+    const ans = document.createElement("div");
+    ans.style.cssText = "display:none; margin-top:10px; padding:8px 10px; background:var(--bg); border-left:2px solid var(--ok); border-radius:6px; font-size:12.5px; line-height:1.55;";
+    ans.innerHTML = `<div style="color:var(--ok); font-weight:600; margin-bottom:4px;">정답: ${escapeHtml(q.a || "")}</div><div style="color:var(--text-dim);">${escapeHtml(q.explain || "")}</div>`;
+    reveal.onclick = () => {
+      const open = ans.style.display === "none";
+      ans.style.display = open ? "block" : "none";
+      reveal.textContent = open ? "숨기기" : "정답 보기";
+    };
+    card.append(qEl, reveal, ans);
+    body.appendChild(card);
+  });
+}
+$("#btn-paper-quiz").onclick = runQuiz;
+$("#quiz-regen").onclick = runQuiz;
+$("#quiz-close").onclick = () => { $("#quiz-modal").style.display = "none"; };
+
+// === 참고문헌 추출 ===
+async function extractRefs() {
+  if (!state.currentPaperId) return toast("논문을 먼저 선택하세요.", true);
+  const list = $("#refs-list");
+  list.innerHTML = `<div style="padding:12px; color:var(--text-mute);">추출 중…</div>`;
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/references`);
+    $("#refs-count").textContent = data.count;
+    if (!data.count) {
+      list.innerHTML = "";
+      $("#refs-empty-hint").textContent = "References 섹션을 찾을 수 없거나 형식이 다릅니다.";
+      $("#refs-empty-hint").style.display = "";
+      return;
+    }
+    $("#refs-empty-hint").style.display = "none";
+    list.innerHTML = "";
+    data.references.forEach((ref) => {
+      const card = document.createElement("div");
+      card.style.cssText = "padding:8px 12px; margin:4px 8px; border:1px solid var(--border); border-radius:6px; background:var(--bg-3);";
+      const titleEl = document.createElement("div");
+      titleEl.style.cssText = "color:var(--text); font-weight:500; font-size:12.5px; margin-bottom:4px;";
+      titleEl.textContent = ref.title;
+      const meta = document.createElement("div");
+      meta.style.cssText = "color:var(--text-mute); font-size:11px; margin-bottom:6px;";
+      meta.textContent = `${ref.authors} · ${ref.year}`;
+      const links = document.createElement("div");
+      links.style.cssText = "display:flex; gap:6px;";
+      const a1 = document.createElement("a");
+      a1.href = ref.arxiv_search; a1.target = "_blank";
+      a1.style.cssText = "font-size:11px; color:var(--accent); text-decoration:none; border:1px solid var(--border); padding:2px 8px; border-radius:4px;";
+      a1.textContent = "arXiv";
+      const a2 = document.createElement("a");
+      a2.href = ref.scholar_search; a2.target = "_blank";
+      a2.style.cssText = "font-size:11px; color:var(--accent); text-decoration:none; border:1px solid var(--border); padding:2px 8px; border-radius:4px;";
+      a2.textContent = "Scholar";
+      links.append(a1, a2);
+      card.append(titleEl, meta, links);
+      list.appendChild(card);
+    });
+  } catch (e) { list.innerHTML = `<div style="padding:12px; color:var(--danger);">${e.message}</div>`; }
+}
+$("#btn-refs-extract").onclick = extractRefs;
+$("#btn-paper-refs").onclick = () => {
+  // Switch to refs tab and extract
+  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "refs"));
+  $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === "refs-panel"));
+  extractRefs();
+};
+
+// === 태그 편집 (viewer-title 클릭 → 프롬프트) ===
+async function editTags() {
+  if (!state.currentPaperId) return;
+  const cur = (state.currentPaper.meta.tags || []).join(", ");
+  const input = await prompt2("태그 (쉼표로 구분)", cur);
+  if (input === null) return;
+  const tags = input.split(",").map((s) => s.trim()).filter(Boolean);
+  try {
+    const data = await api(`/api/papers/${state.currentPaperId}/meta`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tags }),
+    });
+    state.currentPaper.meta = data.meta;
+    applyMetaToUI(data.meta);
+    toast("태그 저장됨");
+  } catch (e) { toast(e.message, true); }
+}
+$("#viewer-title").style.cursor = "pointer";
+$("#viewer-title").onclick = editTags;
+
+function applyMetaToUI(meta) {
+  $("#viewer-title").textContent = meta.title || meta.original_filename;
+  const tags = meta.tags || [];
+  const tagsEl = $("#viewer-tags");
+  tagsEl.innerHTML = "";
+  tags.forEach((t) => {
+    const b = document.createElement("span");
+    b.className = "tag-badge";
+    b.textContent = t;
+    tagsEl.appendChild(b);
+  });
+  // progress bar
+  const p = Math.max(0, Math.min(1, meta.progress || 0));
+  $("#progress-bar-fill").style.width = (p * 100) + "%";
+}
+
+// === 진도 자동 저장 (스크롤 max 도달률) ===
+let progressSaveTimer = null;
+let progressMax = 0;
+function updateProgress() {
+  const wrap = $("#viewer-wrap");
+  if (!wrap.scrollHeight || wrap.scrollHeight <= wrap.clientHeight) return;
+  const cur = (wrap.scrollTop + wrap.clientHeight) / wrap.scrollHeight;
+  if (cur > progressMax) progressMax = cur;
+  $("#progress-bar-fill").style.width = (progressMax * 100) + "%";
+  if (!state.currentPaperId) return;
+  clearTimeout(progressSaveTimer);
+  progressSaveTimer = setTimeout(async () => {
+    try {
+      await api(`/api/papers/${state.currentPaperId}/meta`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ progress: progressMax }),
+      });
+      if (state.currentPaper && state.currentPaper.meta) {
+        state.currentPaper.meta.progress = progressMax;
+      }
+    } catch (e) { /* silent */ }
+  }, 1500);
+}
+$("#viewer-wrap").addEventListener("scroll", updateProgress);
+
+// === PDF 안 검색 (Cmd/Ctrl+F) ===
+const findState = { matches: [], idx: -1, lastQuery: "" };
+function openFindBar() {
+  if (!state.pdfDoc) return;
+  $("#pdf-find-bar").classList.add("shown");
+  setTimeout(() => $("#pdf-find-input").focus(), 30);
+}
+function closeFindBar() {
+  $("#pdf-find-bar").classList.remove("shown");
+  clearFindMarks();
+}
+function clearFindMarks() {
+  $$(".pdf-find-mark").forEach((m) => {
+    const t = document.createTextNode(m.textContent);
+    m.parentNode.replaceChild(t, m);
+  });
+  findState.matches = [];
+  findState.idx = -1;
+}
+function runFind(q) {
+  clearFindMarks();
+  findState.lastQuery = q;
+  if (!q || q.length < 2) { $("#pdf-find-status").textContent = "—"; return; }
+  const q_lower = q.toLowerCase();
+  $$(".text-layer").forEach((tl) => {
+    tl.querySelectorAll("span").forEach((sp) => {
+      const txt = sp.textContent;
+      if (!txt) return;
+      const lower = txt.toLowerCase();
+      let i = lower.indexOf(q_lower);
+      if (i < 0) return;
+      // Split text node into <mark>...
+      const before = txt.substring(0, i);
+      const mid = txt.substring(i, i + q.length);
+      const after = txt.substring(i + q.length);
+      sp.textContent = before;
+      const mark = document.createElement("span");
+      mark.className = "pdf-find-mark";
+      mark.textContent = mid;
+      sp.appendChild(mark);
+      sp.appendChild(document.createTextNode(after));
+      findState.matches.push(mark);
+    });
+  });
+  if (findState.matches.length) {
+    findState.idx = 0;
+    highlightCurrentFind();
+    $("#pdf-find-status").textContent = `1 / ${findState.matches.length}`;
+  } else {
+    $("#pdf-find-status").textContent = "0개";
+  }
+}
+function highlightCurrentFind() {
+  $$(".pdf-find-mark").forEach((m) => m.classList.remove("current"));
+  const m = findState.matches[findState.idx];
+  if (!m) return;
+  m.classList.add("current");
+  m.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function nextFind(dir) {
+  if (!findState.matches.length) return;
+  findState.idx = (findState.idx + dir + findState.matches.length) % findState.matches.length;
+  highlightCurrentFind();
+  $("#pdf-find-status").textContent = `${findState.idx + 1} / ${findState.matches.length}`;
+}
+$("#btn-pdf-find").onclick = openFindBar;
+$("#pdf-find-close").onclick = closeFindBar;
+$("#pdf-find-prev").onclick = () => nextFind(-1);
+$("#pdf-find-next").onclick = () => nextFind(1);
+let findDebounce = null;
+$("#pdf-find-input").addEventListener("input", (e) => {
+  clearTimeout(findDebounce);
+  findDebounce = setTimeout(() => runFind(e.target.value), 200);
+});
+$("#pdf-find-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); nextFind(e.shiftKey ? -1 : 1); }
+  if (e.key === "Escape") { e.preventDefault(); closeFindBar(); }
+});
+
+// === 단어장 CSV 다운로드 ===
+$("#btn-vocab-csv").onclick = () => {
+  window.location.href = "/api/vocabulary/export.csv";
+};
+
+// === 단어장 플래시카드 ===
+let flashIdx = 0;
+function setVocabMode(mode) {
+  $$(".vocab-mode").forEach((b) => {
+    const active = b.dataset.mode === mode;
+    b.style.background = active ? "var(--bg-3)" : "transparent";
+    b.style.color = active ? "var(--text)" : "var(--text-dim)";
+  });
+  $("#vocab-list").style.display = mode === "list" ? "" : "none";
+  $("#vocab-flash-view").style.display = mode === "flash" ? "flex" : "none";
+  if (mode === "flash") {
+    flashIdx = 0;
+    showFlash();
+  }
+}
+function showFlash() {
+  const total = vocabCache.length;
+  $("#flash-step").textContent = `${total ? flashIdx + 1 : 0} / ${total}`;
+  if (!total) {
+    $("#flash-word").textContent = "—";
+    $("#flash-back").style.display = "none";
+    return;
+  }
+  const w = vocabCache[flashIdx];
+  $("#flash-word").textContent = w.word;
+  $("#flash-back").style.display = "none";
+  $("#flash-back").textContent = w.explanation || "";
+}
+$$(".vocab-mode").forEach((b) => {
+  b.onclick = () => setVocabMode(b.dataset.mode);
+});
+$("#flash-card").onclick = () => {
+  const back = $("#flash-back");
+  back.style.display = back.style.display === "none" ? "block" : "none";
+};
+$("#flash-flip").onclick = () => $("#flash-card").click();
+$("#flash-prev").onclick = () => {
+  if (!vocabCache.length) return;
+  flashIdx = (flashIdx - 1 + vocabCache.length) % vocabCache.length;
+  showFlash();
+};
+$("#flash-next").onclick = () => {
+  if (!vocabCache.length) return;
+  flashIdx = (flashIdx + 1) % vocabCache.length;
+  showFlash();
+};
+
+// === 전역 단축키 ===
+document.addEventListener("keydown", (e) => {
+  const ae = document.activeElement;
+  const inEditable = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
+  // ? = 도움말 (입력 중이 아닐 때만)
+  if (!inEditable && e.key === "?") {
+    e.preventDefault();
+    openHelp();
+    return;
+  }
+  // Cmd/Ctrl + K = 라이브러리 검색
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    openLibSearch();
+    return;
+  }
+  // Cmd/Ctrl + F = PDF 안 검색
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+    if (state.pdfDoc) {
+      e.preventDefault();
+      openFindBar();
+    }
+    return;
+  }
+});
+
+// === TTS — DETAIL 팝업 footer 에 🔊 버튼 추가 ===
+(function injectTTSButton() {
+  const footer = $("#sel-footer");
+  if (!footer) return;
+  const btn = document.createElement("button");
+  btn.textContent = "🔊";
+  btn.title = "선택 텍스트 / 설명 읽기";
+  btn.style.cssText = "background:transparent; border:0; color:#4b5563; padding:4px 9px; border-radius:6px; font-size:11.5px; cursor:pointer;";
+  btn.onclick = () => {
+    const text = state.detailSelectionText || $("#sel-explanation").textContent;
+    if (!text) return;
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      // Pick a likely English voice if the selection is mostly ASCII
+      const englishish = /^[\x00-\x7F\s\W]+$/.test(text);
+      u.lang = englishish ? "en-US" : "ko-KR";
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch (e) { toast("TTS 미지원 브라우저", true); }
+  };
+  // insert before the 닫기 button
+  footer.insertBefore(btn, $("#sel-close"));
+})();
+
+// === 북마크 카드 "이 부분 질문" 버튼 — renderBookmarks 후 데코레이션 ===
+const _origRenderBookmarks = renderBookmarks;
+window.renderBookmarks = function patched() {
+  _origRenderBookmarks();
+  $$("#bookmark-list > div").forEach((card, idx) => {
+    const bm = state.currentPaper && state.currentPaper.bookmarks && state.currentPaper.bookmarks[idx];
+    if (!bm) return;
+    const header = card.firstChild;
+    // Avoid double-insertion
+    if (header.querySelector(".bm-ask-btn")) return;
+    const ask = document.createElement("button");
+    ask.textContent = "💬";
+    ask.title = "이 부분에 대해 채팅에서 질문";
+    ask.className = "bm-ask-btn";
+    ask.style.cssText = "background:transparent; border:0; color:var(--text-mute); padding:2px 6px; border-radius:4px; font-size:13px;";
+    ask.onclick = (e) => {
+      e.stopPropagation();
+      $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === "chat"));
+      $$(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === "chat-panel"));
+      $("#chat-input").value = `p.${bm.page} 의 다음 부분에 대해 설명해줘:\n\n> ${bm.text}\n\n${bm.memo ? "(메모: " + bm.memo + ")\n\n" : ""}`;
+      $("#chat-input").focus();
+    };
+    // insert before the ✕ delete button (last child)
+    header.insertBefore(ask, header.lastChild);
+  });
+};
+
+// === openPaper / applyMeta hook ===
+// Old openPaper sets viewer-title directly; we wrap it to also render tags + progress.
+const _origOpenPaper = openPaper;
+window.openPaper = async function patchedOpen(paperId) {
+  await _origOpenPaper(paperId);
+  if (state.currentPaper && state.currentPaper.meta) {
+    progressMax = state.currentPaper.meta.progress || 0;
+    applyMetaToUI(state.currentPaper.meta);
+    // restore scroll target after pages render
+    setTimeout(() => {
+      const wrap = $("#viewer-wrap");
+      if (wrap.scrollHeight > wrap.clientHeight && progressMax > 0) {
+        // Don't auto-scroll fully — just show the progress fill
+        $("#progress-bar-fill").style.width = (progressMax * 100) + "%";
+      }
+    }, 600);
+  }
+};
 
 (async () => {
   await loadModels();

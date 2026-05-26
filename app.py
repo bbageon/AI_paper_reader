@@ -1,8 +1,13 @@
 import os
+import io
+import re
+import csv
 import json
 import time
 import shutil
+import zipfile
 import hashlib
+from collections import OrderedDict
 from pathlib import Path
 import requests
 import pymupdf4llm
@@ -44,6 +49,27 @@ OLLAMA_OPTIONS = {
     "repeat_penalty": 1.3,
     "repeat_last_n": 128,
 }
+
+
+# ── Small in-memory LRU cache for explain responses ──
+# Key = (paper_id, mode, selection). Same selection in the same paper returns
+# instantly on repeat. Capped so it can't grow unbounded.
+_EXPLAIN_CACHE: "OrderedDict[tuple, str]" = OrderedDict()
+_EXPLAIN_CACHE_MAX = 512
+
+
+def cache_get(key):
+    if key in _EXPLAIN_CACHE:
+        _EXPLAIN_CACHE.move_to_end(key)
+        return _EXPLAIN_CACHE[key]
+    return None
+
+
+def cache_put(key, value):
+    _EXPLAIN_CACHE[key] = value
+    _EXPLAIN_CACHE.move_to_end(key)
+    while len(_EXPLAIN_CACHE) > _EXPLAIN_CACHE_MAX:
+        _EXPLAIN_CACHE.popitem(last=False)
 
 
 def _think_payload():
@@ -464,8 +490,37 @@ def api_paper(paper_id):
         "notes_md": (paper_dir / "notes.md").read_text(encoding="utf-8"),
         "chat": load_chat(paper_dir),
         "bookmarks": load_bookmarks(paper_dir).get("bookmarks", []),
+        "highlights": load_highlights(paper_dir).get("highlights", []),
         "folder": str(paper_dir.parent.relative_to(LIBRARY_DIR)),
     })
+
+
+@app.route("/api/papers/<paper_id>/export.zip")
+def api_paper_export(paper_id):
+    """Bundle paper + notes + chat + bookmarks + highlights as a single ZIP."""
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    meta = load_meta(paper_dir)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in ("content.md", "notes.md", "meta.json", "chat.json",
+                     "bookmarks.json", "highlights.json"):
+            p = paper_dir / name
+            if p.exists():
+                zf.write(p, arcname=name)
+        # Include the PDF too if not too large (skip > 25 MB to keep zip sane)
+        pdf = paper_dir / "original.pdf"
+        if pdf.exists() and pdf.stat().st_size < 25 * 1024 * 1024:
+            zf.write(pdf, arcname="original.pdf")
+    buf.seek(0)
+    safe_name = re.sub(r"[^A-Za-z0-9_\-]+", "_", meta.get("title", "paper"))[:60]
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"{safe_name}.zip",
+    )
 
 
 @app.route("/api/papers/<paper_id>/pdf")
@@ -605,6 +660,375 @@ def api_vocab_delete(idx):
     removed = vocab["words"].pop(idx)
     save_vocabulary(vocab)
     return jsonify({"success": True, "removed": removed["word"]})
+
+
+@app.route("/api/vocabulary/export.csv")
+def api_vocab_export_csv():
+    """Export the vocabulary list as CSV (Anki-compatible: front, back)."""
+    vocab = load_vocabulary()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["word", "explanation", "paper_title", "added_at_iso"])
+    for v in vocab["words"]:
+        w.writerow([
+            v.get("word", ""),
+            v.get("explanation", ""),
+            v.get("paper_title", ""),
+            time.strftime("%Y-%m-%d %H:%M", time.localtime(v.get("added_at", 0))),
+        ])
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=vocabulary.csv"},
+    )
+
+
+# ── Routes: library-wide search ──
+@app.route("/api/library/search")
+def api_library_search():
+    """Grep all papers' content.md + notes.md + bookmarks for a query string.
+    Returns matches grouped by paper with a short snippet around each hit."""
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify({"results": []})
+    q_lower = q.lower()
+    results = []
+    for paper_dir in LIBRARY_DIR.rglob("*"):
+        meta_file = paper_dir / "meta.json"
+        if not (paper_dir.is_dir() and meta_file.exists()):
+            continue
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        hits = []
+        # content.md
+        try:
+            content = (paper_dir / "content.md").read_text(encoding="utf-8")
+            idx = content.lower().find(q_lower)
+            if idx >= 0:
+                start = max(0, idx - 60)
+                end = min(len(content), idx + len(q) + 60)
+                hits.append({"where": "content", "snippet": content[start:end]})
+        except OSError:
+            pass
+        # notes
+        try:
+            notes = (paper_dir / "notes.md").read_text(encoding="utf-8")
+            if q_lower in notes.lower():
+                idx = notes.lower().find(q_lower)
+                start = max(0, idx - 60)
+                end = min(len(notes), idx + len(q) + 60)
+                hits.append({"where": "notes", "snippet": notes[start:end]})
+        except OSError:
+            pass
+        # bookmarks
+        for bm in load_bookmarks(paper_dir).get("bookmarks", []):
+            haystack = (bm.get("text", "") + " " + bm.get("memo", "")).lower()
+            if q_lower in haystack:
+                hits.append({
+                    "where": "bookmark",
+                    "page": bm.get("page"),
+                    "snippet": (bm.get("memo") or bm.get("text", ""))[:120],
+                })
+        if hits:
+            results.append({
+                "paper_id": meta.get("id"),
+                "title": meta.get("title") or meta.get("original_filename"),
+                "folder": str(paper_dir.parent.relative_to(LIBRARY_DIR)),
+                "hits": hits[:5],
+            })
+    return jsonify({"results": results, "count": len(results)})
+
+
+# ── Routes: per-paper meta extras (tags, reading progress) ──
+@app.route("/api/papers/<paper_id>/meta", methods=["PATCH"])
+def api_paper_meta_patch(paper_id):
+    """Patch editable meta fields: tags (list of strings), progress (0-1 float)."""
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    meta = load_meta(paper_dir)
+    data = request.json or {}
+    if "tags" in data:
+        tags = data["tags"]
+        if not isinstance(tags, list):
+            return jsonify({"error": "tags must be a list"}), 400
+        meta["tags"] = [str(t).strip() for t in tags if str(t).strip()][:20]
+    if "progress" in data:
+        try:
+            p = float(data["progress"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "progress must be a number"}), 400
+        meta["progress"] = max(0.0, min(1.0, p))
+        meta["progress_updated_at"] = time.time()
+    (paper_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+    )
+    return jsonify({"success": True, "meta": meta})
+
+
+# ── Routes: references extraction ──
+_REF_LINE_RE = re.compile(
+    r"^\s*(?:[-*•]\s*|\[\d+\]\s*|\d+\.\s+)?"
+    r"(?P<authors>[A-Z][^.]{3,120}?)\.\s+"
+    r"(?P<year>(?:19|20)\d{2})[a-z]?\.\s+"
+    r"(?P<title>[^.]{6,300})\.",
+    re.MULTILINE,
+)
+
+
+@app.route("/api/papers/<paper_id>/references")
+def api_paper_references(paper_id):
+    """Heuristic reference extraction: find the References section in content.md
+    and parse 'Authors. Year. Title.' patterns. Returns a list with arXiv/Scholar
+    search URLs ready to use."""
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    content = (paper_dir / "content.md").read_text(encoding="utf-8")
+    # Find References / Bibliography section
+    lower = content.lower()
+    candidates = ["\nreferences\n", "## references", "## **references**", "bibliography"]
+    cut = -1
+    for marker in candidates:
+        idx = lower.find(marker)
+        if idx >= 0 and (cut == -1 or idx < cut):
+            cut = idx
+    section = content[cut:] if cut >= 0 else content[-6000:]
+    refs = []
+    for m in _REF_LINE_RE.finditer(section):
+        title = re.sub(r"\s+", " ", m.group("title")).strip().rstrip(".,;:")
+        if len(title) < 6:
+            continue
+        from urllib.parse import quote
+        refs.append({
+            "authors": re.sub(r"\s+", " ", m.group("authors")).strip(),
+            "year": m.group("year"),
+            "title": title,
+            "arxiv_search": f"https://arxiv.org/search/?query={quote(title)}&searchtype=all",
+            "scholar_search": f"https://scholar.google.com/scholar?q={quote(title)}",
+        })
+        if len(refs) >= 80:
+            break
+    return jsonify({"references": refs, "count": len(refs)})
+
+
+# ── Routes: highlights (per-paper) ──
+def load_highlights(paper_dir: Path) -> dict:
+    p = paper_dir / "highlights.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"highlights": []}
+
+
+def save_highlights(paper_dir: Path, data: dict) -> None:
+    (paper_dir / "highlights.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+@app.route("/api/papers/<paper_id>/highlights")
+def api_highlights_list(paper_id):
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    return jsonify(load_highlights(paper_dir))
+
+
+@app.route("/api/papers/<paper_id>/highlights", methods=["POST"])
+def api_highlights_add(paper_id):
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    data = request.json or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Highlight text required"}), 400
+    try:
+        page = int(data.get("page", 1))
+    except (TypeError, ValueError):
+        page = 1
+    color = (data.get("color") or "yellow").strip()
+    hs = load_highlights(paper_dir)
+    new = {
+        "id": hashlib.sha1(f"{text[:40]}-{time.time()}".encode()).hexdigest()[:10],
+        "text": text[:2000],
+        "page": page,
+        "color": color,
+        "created_at": time.time(),
+    }
+    hs["highlights"].append(new)
+    save_highlights(paper_dir, hs)
+    return jsonify({"success": True, "highlight": new})
+
+
+@app.route("/api/papers/<paper_id>/highlights/<hl_id>", methods=["DELETE"])
+def api_highlights_delete(paper_id, hl_id):
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    hs = load_highlights(paper_dir)
+    before = len(hs["highlights"])
+    hs["highlights"] = [h for h in hs["highlights"] if h.get("id") != hl_id]
+    if len(hs["highlights"]) == before:
+        return jsonify({"error": "Not found"}), 404
+    save_highlights(paper_dir, hs)
+    return jsonify({"success": True})
+
+
+# ── Routes: quiz generation ──
+QUIZ_PROMPT = (
+    "You are creating a self-study quiz from an academic paper.\n"
+    "OUTPUT LANGUAGE: KOREAN ONLY. 반드시 한국어로 응답하세요.\n\n"
+    "Generate exactly 5 quiz questions in this JSON format (no other prose, no markdown fences):\n"
+    '{{"questions":[{{"q":"질문","a":"정답","explain":"왜 이 답인지"}}]}}\n\n'
+    "Mix difficulty: 2 factual recall, 2 conceptual, 1 application. "
+    "Questions must be answerable from the paper alone.\n\n"
+    "Paper:\n<paper>\n{paper_text}\n</paper>\n\n"
+    "Output the JSON now, nothing else."
+)
+
+
+@app.route("/api/papers/<paper_id>/quiz", methods=["POST"])
+def api_paper_quiz(paper_id):
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    data = request.json or {}
+    model = data.get("model") or DEFAULT_MODEL
+    paper_text = (paper_dir / "content.md").read_text(encoding="utf-8")
+    system_prompt = QUIZ_PROMPT.format(paper_text=paper_text)
+    try:
+        reply = chat_with_ollama(model, system_prompt, [
+            {"role": "user", "content": "Generate the quiz now as JSON."},
+        ])
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": "Cannot connect to Ollama"}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    # Best-effort JSON extract — strip code fences if any
+    raw = reply.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").lstrip("json").strip()
+    try:
+        parsed = json.loads(raw)
+        questions = parsed.get("questions", [])
+    except Exception:
+        # fall back: return raw so the frontend can display it
+        return jsonify({"raw": reply, "questions": []})
+    return jsonify({"questions": questions[:10], "raw": reply})
+
+
+# ── Routes: arXiv URL import + metadata enrichment ──
+_ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5})(?:v\d+)?")
+
+
+@app.route("/api/library/import_arxiv", methods=["POST"])
+def api_import_arxiv():
+    """Accept an arXiv URL or ID, fetch the PDF, ingest it like a normal upload."""
+    data = request.json or {}
+    url = (data.get("url") or "").strip()
+    folder_rel = data.get("folder", "Default")
+    m = _ARXIV_ID_RE.search(url)
+    if not m:
+        return jsonify({"error": "Could not find arXiv ID in URL"}), 400
+    arxiv_id = m.group(1)
+    pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    try:
+        r = requests.get(pdf_url, timeout=60)
+        r.raise_for_status()
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch PDF: {e}"}), 502
+    try:
+        folder_dir = safe_folder_path(folder_rel)
+        folder_dir.mkdir(parents=True, exist_ok=True)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    fname = f"arxiv-{arxiv_id}.pdf"
+    paper_id = make_paper_id(fname)
+    paper_dir = folder_dir / paper_id
+    paper_dir.mkdir()
+    pdf_path = paper_dir / "original.pdf"
+    pdf_path.write_bytes(r.content)
+
+    try:
+        paper_text = pymupdf4llm.to_markdown(str(pdf_path))
+    except Exception as e:
+        shutil.rmtree(paper_dir, ignore_errors=True)
+        return jsonify({"error": f"Failed to parse PDF: {e}"}), 500
+
+    title = f"arXiv:{arxiv_id}"
+    (paper_dir / "content.md").write_text(paper_text, encoding="utf-8")
+    (paper_dir / "notes.md").write_text(
+        f"# {title}\n\n> arXiv: https://arxiv.org/abs/{arxiv_id}\n",
+        encoding="utf-8",
+    )
+    meta = {
+        "id": paper_id,
+        "title": title,
+        "original_filename": fname,
+        "uploaded_at": time.time(),
+        "char_count": len(paper_text),
+        "approx_tokens": len(paper_text) // 4,
+        "arxiv_id": arxiv_id,
+        "source_url": f"https://arxiv.org/abs/{arxiv_id}",
+    }
+    (paper_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+    )
+    save_chat(paper_dir, {"messages": [], "checkpoints": []})
+    return jsonify({"success": True, "paper": meta})
+
+
+@app.route("/api/papers/<paper_id>/enrich", methods=["POST"])
+def api_paper_enrich(paper_id):
+    """Pull title/authors/abstract/citations from Semantic Scholar by arXiv ID
+    (if known) or by title search. Updates meta.json. Network call required."""
+    paper_dir = find_paper_dir(paper_id)
+    if not paper_dir:
+        return jsonify({"error": "Paper not found"}), 404
+    meta = load_meta(paper_dir)
+    arxiv_id = meta.get("arxiv_id")
+    base = "https://api.semanticscholar.org/graph/v1/paper"
+    fields = "title,authors,year,abstract,citationCount,referenceCount,venue,externalIds"
+    try:
+        if arxiv_id:
+            r = requests.get(f"{base}/arXiv:{arxiv_id}", params={"fields": fields}, timeout=15)
+        else:
+            r = requests.get(f"{base}/search", params={
+                "query": meta.get("title", ""), "limit": 1, "fields": fields,
+            }, timeout=15)
+            r.raise_for_status()
+            j = r.json()
+            if not j.get("data"):
+                return jsonify({"error": "No match on Semantic Scholar"}), 404
+            paper_s2 = j["data"][0]
+            r2 = requests.get(f"{base}/{paper_s2['paperId']}",
+                              params={"fields": fields}, timeout=15)
+            r2.raise_for_status()
+            r = r2
+        r.raise_for_status()
+        d = r.json()
+    except Exception as e:
+        return jsonify({"error": f"Semantic Scholar fetch failed: {e}"}), 502
+    meta["title"] = d.get("title") or meta.get("title")
+    meta["authors"] = [a.get("name") for a in (d.get("authors") or []) if a.get("name")]
+    meta["year"] = d.get("year")
+    meta["abstract"] = d.get("abstract")
+    meta["citation_count"] = d.get("citationCount")
+    meta["reference_count"] = d.get("referenceCount")
+    meta["venue"] = d.get("venue")
+    if d.get("externalIds", {}).get("DOI"):
+        meta["doi"] = d["externalIds"]["DOI"]
+    (paper_dir / "meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+    )
+    return jsonify({"success": True, "meta": meta})
 
 
 # ── Routes: bookmarks (per-paper) ──
@@ -839,6 +1263,18 @@ def api_paper_explain(paper_id):
     tmpl = EXPLAIN_WORD_PROMPT if mode == "word" else EXPLAIN_SENTENCE_PROMPT
     system_prompt = tmpl.format(context=context_snippet, selection=selection)
 
+    # Cache by (paper, mode, selection). Same drag twice = instant.
+    cache_key = (paper_id, mode, selection)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return jsonify({
+            "mode": mode,
+            "selection": selection,
+            "explanation": cached,
+            "model": model,
+            "cached": True,
+        })
+
     # Use a small context for explain — system prompt is tiny (~1k tokens),
     # so allocating the chat's 40K KV cache to a 4B model is wasteful and
     # slows first-load. 4096 fits easily and loads fast.
@@ -853,11 +1289,13 @@ def api_paper_explain(paper_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+    cache_put(cache_key, reply)
     return jsonify({
         "mode": mode,
         "selection": selection,
         "explanation": reply,
         "model": model,
+        "cached": False,
     })
 
 
